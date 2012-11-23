@@ -31,30 +31,7 @@
 #include <utils/Log.h>
 
 #include "sensors.h"
-
-#if defined SENSORHAL_ACC_ADXL346
-#include "AdxlSensor.h"
-#elif defined SENSORHAL_ACC_KXTF9
-#include "KionixSensor.h"
-#elif defined SENSORHAL_ACC_LIS3DH
-#include "Lis3dhSensor.h"
-#elif defined SENSORHAL_ACC_D03
 #include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D05
-#include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D06
-#include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D07
-#include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D08
-#include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D10
-#include "DmtSensor.h"
-#elif defined SENSORHAL_ACC_D18
-#include "DmtSensor.h"
-#else
-#error "Sensor configuration ERROR: No sensor is defined."
-#endif
 
 #include "AkmSensor.h"
 #include "SensorAL3006.h"
