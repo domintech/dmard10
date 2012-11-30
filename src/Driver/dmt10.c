@@ -17,7 +17,9 @@
  * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * 	GNU General Public License for more details.
  *
- *  V1.00	D10 First Release	date 2012/9/21
+ *  V1.00	D10 First Release											date 2012/09/21
+ *  V1.01	static struct dmt_data s_dmt Refresh to device_i2c_probe	date 2012/11/23
+ *  V1.02	0x0D* cck : adjustment 204.8KHz core clock					date 2012/11/30
  */
 #include "dmt10.h"
 #include <linux/module.h>
@@ -40,22 +42,17 @@
 #include <linux/poll.h>
 #include <linux/string.h>
 #include <linux/gpio.h>
-#include <linux/platform_device.h>
-#define DMT_DEBUG_DATA	
+#include <linux/platform_device.h>	
 static unsigned int interval;
 void gsensor_write_offset_to_file(void);
 void gsensor_read_offset_from_file(void);
 char OffsetFileName[] = "/data/misc/dmt/offset.txt";	/* FILE offset.txt */
 static raw_data offset;
-static struct dmt_data devdata;
 static struct dmt_data *s_dmt;
-
 static int device_init(void);
 static void device_exit(void);
 
 static int device_open(struct inode*, struct file*);
-//static ssize_t device_write(struct file*, const char*, size_t, loff_t*);
-//static ssize_t device_read(struct file*, char*, size_t, loff_t*);
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 static int device_close(struct inode*, struct file*);
 
@@ -67,30 +64,32 @@ void device_i2c_read_xyz(struct i2c_client *client, s16 *xyz);
 static int device_i2c_rxdata(struct i2c_client *client, unsigned char *rxDat, int length);
 static int device_i2c_txdata(struct i2c_client *client, unsigned char *txData, int length);
 
-static int DMT_GetOpenStatus(void){	
-	dmtprintk(KERN_INFO "start active=%d\n",s_dmt->active.counter);
-	wait_event_interruptible(s_dmt->open_wq, (atomic_read(&s_dmt->active) != 0));
+static int DMT_GetOpenStatus(struct i2c_client *client){
+	struct dmt_data *dmt = i2c_get_clientdata(client);	
+	GSE_LOG("start active=%d\n",dmt->active.counter);
+	wait_event_interruptible(dmt->open_wq, (atomic_read(&dmt->active) != 0));
 	return 0;
 }
 
-static int DMT_GetCloseStatus(void){
-	dmtprintk(KERN_INFO "start active=%d\n",s_dmt->active.counter);
-	wait_event_interruptible(s_dmt->open_wq, (atomic_read(&s_dmt->active) <= 0));
+static int DMT_GetCloseStatus(struct i2c_client *client){
+	struct dmt_data *dmt = i2c_get_clientdata(client);
+	GSE_LOG("start active=%d\n",dmt->active.counter);
+	wait_event_interruptible(dmt->open_wq, (atomic_read(&dmt->active) <= 0));
 	return 0;
 }
 
-static void DMT_sysfs_update_active_status(int en){
+static void DMT_sysfs_update_active_status(struct dmt_data *dmt , int en){
 	unsigned long dmt_delay;
 	if(en){
-		dmt_delay=msecs_to_jiffies(atomic_read(&s_dmt->delay));
+		dmt_delay=msecs_to_jiffies(atomic_read(&dmt->delay));
 		if(dmt_delay<1)
 			dmt_delay=1;
 
-		dmtprintk(KERN_INFO "schedule_delayed_work start with delay time=%lu\n",dmt_delay);
-		schedule_delayed_work(&devdata.delaywork,dmt_delay);
+		GSE_LOG("schedule_delayed_work start with delay time=%lu\n",dmt_delay);
+		schedule_delayed_work(&dmt->delaywork,dmt_delay);
 	}
 	else 
-		cancel_delayed_work_sync(&devdata.delaywork);
+		cancel_delayed_work_sync(&dmt->delaywork);
 }
 
 static bool get_value_as_int(char const *buf, size_t size, int *value){
@@ -149,36 +148,74 @@ static bool get_value_as_int64(char const *buf, size_t size, long long *value)
 	return true;
 }
 
-static ssize_t DMT_enable_acc_show(struct device *dev, struct device_attribute *attr, char *buf){
+static ssize_t dmt_sysfs_enable_show(
+	struct dmt_data *dmt, char *buf, int pos)
+{
 	char str[2][16]={"ACC enable OFF","ACC enable ON"};
 	int flag;
-	flag=atomic_read(&s_dmt->enable); 	
+	flag=atomic_read(&dmt->enable); 	
 	return sprintf(buf, "%s\n", str[flag]);
 }
 
-static ssize_t DMT_enable_acc_store( struct device *dev, struct device_attribute *attr, char const *buf, size_t count){
-	int en;
-	dmtprintk(KERN_INFO "%s:buf=%x %x\n",__func__,buf[0],buf[1]);
+static ssize_t dmt_sysfs_enable_store(
+	struct dmt_data *dmt, char const *buf, size_t count, int pos)
+{
+	int en = 0;
+	if (NULL == buf)
+		return -EINVAL;
+	GSE_LOG("buf=%x %x\n", buf[0], buf[1]);
+	if (0 == count)
+		return 0;
+
 	if (false == get_value_as_int(buf, count, &en))
 		return -EINVAL;
 
 	en = en ? 1 : 0;
-	atomic_set(&s_dmt->enable,en);
-	DMT_sysfs_update_active_status(en);
-	return 1;
+
+	atomic_set(&dmt->enable,en);
+	DMT_sysfs_update_active_status(dmt , en);
+	return count;
 }
 
+/***** Acceleration ***/
+static ssize_t DMT_enable_acc_show(struct device *dev, struct device_attribute *attr, char *buf){
+	return dmt_sysfs_enable_show( dev_get_drvdata(dev), buf, ACC_DATA_FLAG);
+}
+
+static ssize_t DMT_enable_acc_store( struct device *dev, struct device_attribute *attr, char const *buf, size_t count){
+	return dmt_sysfs_enable_store( dev_get_drvdata(dev), buf, count, ACC_DATA_FLAG);
+}
+
+/***** sysfs delay **************************************************/
+static ssize_t dmt_sysfs_delay_show( struct dmt_data *dmt, char *buf, int pos){
+	return sprintf(buf, "%d\n", atomic_read(&dmt->delay));
+}
+
+static ssize_t dmt_sysfs_delay_store( struct dmt_data *dmt, char const *buf, size_t count, int pos){
+	long long val = 0;
+
+	if (NULL == buf)
+		return -EINVAL;
+
+	if (0 == count)
+		return 0;
+
+	if (false == get_value_as_int64(buf, count, &val))
+		return -EINVAL;
+
+	atomic_set(&dmt->delay, (unsigned int) val);
+	GSE_LOG("Driver attribute set delay =%lld\n", val);
+
+	return count;
+}
+
+/***** Accelerometer ***/
 static ssize_t DMT_delay_acc_show( struct device *dev, struct device_attribute *attr, char *buf){
-	return sprintf(buf, "%d\n", atomic_read(&s_dmt->delay));
+	return dmt_sysfs_delay_show( dev_get_drvdata(dev), buf, ACC_DATA_FLAG);
 }
 
 static ssize_t DMT_delay_acc_store( struct device *dev, struct device_attribute *attr,char const *buf, size_t count){
-	long long data;
-	if (false == get_value_as_int64(buf, count, &data))
-		return -EINVAL;
-	atomic_set(&s_dmt->delay, (unsigned int) data);
-	dmtprintk(KERN_INFO "Driver attribute set delay =%lld\n",data);
-	return count;
+	return dmt_sysfs_delay_store( dev_get_drvdata(dev), buf, count, ACC_DATA_FLAG);
 }
 
 static struct device_attribute DMT_attributes[] = {
@@ -306,45 +343,47 @@ static void remove_sysfs_interfaces(struct dmt_data *dmt)
 	}
 }
 
-int input_init(void){
+int input_init(struct i2c_client *client){
+	struct dmt_data *dmt = i2c_get_clientdata(client);
 	int err=0;
-	s_dmt->input=input_allocate_device();
-	if (!s_dmt->input)
-	{
-		printk("input device allocate ERROR !!\n");
+	dmt->input=input_allocate_device();
+	if (!dmt->input){
+		GSE_ERR("input device allocate ERROR !!\n");
 		return -ENOMEM;
 	}
 	else
-	  printk("input device allocate Success !!\n");
+		GSE_LOG("input device allocate Success !!\n");
 	/* Setup input device */
-	set_bit(EV_ABS, s_dmt->input->evbit);
+	set_bit(EV_ABS, dmt->input->evbit);
 	/* Accelerometer [-78.5, 78.5]m/s2 in Q16 */
-	input_set_abs_params(s_dmt->input, ABS_X, -5144576, 5144576, 0, 0);
-	input_set_abs_params(s_dmt->input, ABS_Y, -5144576, 5144576, 0, 0);
-	input_set_abs_params(s_dmt->input, ABS_Z, -5144576, 5144576, 0, 0);
-
+	input_set_abs_params(dmt->input, ABS_X, -5144576, 5144576, 0, 0);
+	input_set_abs_params(dmt->input, ABS_Y, -5144576, 5144576, 0, 0);
+	input_set_abs_params(dmt->input, ABS_Z, -5144576, 5144576, 0, 0);
 	/* Set InputDevice Name */
-	s_dmt->input->name = INPUT_NAME_ACC;
-
+	dmt->input->name = INPUT_NAME_ACC;
 	/* Register */
-	err = input_register_device(s_dmt->input);
+	err = input_register_device(dmt->input);
 	if (err) {
-	  printk("input_register_device ERROR !!\n");
-		input_free_device(s_dmt->input);
+		GSE_ERR("input_register_device ERROR !!\n");
+		input_free_device(dmt->input);
 		return err;
 	}
-	  printk("input_register_device SUCCESS %d !! \n",err);
+	GSE_LOG("input_register_device SUCCESS %d !! \n",err);
 
 	return err;
 }
 
 int gsensor_calibrate(void)
 {	
+	//struct dmt_data *dmt = i2c_get_clientdata(client);
 	raw_data avg;
 	int i, j;
 	long xyz_acc[SENSOR_DATA_SIZE];   
   	s16 xyz[SENSOR_DATA_SIZE];
-		
+	
+	offset.u.x=0;
+	offset.u.y=0;
+	offset.u.z=0;
 	/* initialize the accumulation buffer */
   	for(i = 0; i < SENSOR_DATA_SIZE; ++i) 
 		xyz_acc[i] = 0;
@@ -383,14 +422,10 @@ int gsensor_reset(struct i2c_client *client){
 	device_i2c_rxdata(client, buffer2, 2);
 		
 	if( buffer[0] == VALUE_STADR || buffer2[0] == VALUE_STAINT){
-		dmtprintk(KERN_INFO " REG_STADR_VALUE = %d , REG_STAINT_VALUE = %d\n", buffer[0], buffer2[0]);
-		dmtprintk(KERN_INFO " %s DMT_DEVICE_NAME registered I2C driver!\n",__FUNCTION__);
-		devdata.client = client;
+		GSE_LOG(" REG_STADR_VALUE = %d , REG_STAINT_VALUE = %d\n", buffer[0], buffer2[0]);
 	}
 	else{
-		dmtprintk(KERN_INFO " %s gsensor I2C err @@@ REG_STADR_VALUE = %d , REG_STAINT_VALUE = %d \n", 
-						__func__, buffer[0], buffer2[0]);
-		devdata.client = NULL;
+		GSE_LOG(" REG_STADR_VALUE = %d , REG_STAINT_VALUE = %d \n", buffer[0], buffer2[0]);
 		return -1;
 	}
 	/* 2. Powerdown reset */
@@ -412,7 +447,7 @@ int gsensor_reset(struct i2c_client *client){
 	/* 5. AFEN = 1(AFE will powerdown after ADC) */
 	buffer[0] = REG_AFEM;
 	buffer[1] = VALUE_AFEM_AFEN_Normal;	
-	buffer[2] = VALUE_CKSEL_ODR_100;	
+	buffer[2] = VALUE_CKSEL_ODR_100_204;	
 	buffer[3] = VALUE_INTC;	
 	buffer[4] = VALUE_TAPNS_Ave_2;
 	buffer[5] = 0x00;	// DLYC, no delay timing
@@ -433,8 +468,6 @@ void gsensor_set_offset(int val[3]){
 
 struct file_operations dmt_g_sensor_fops = {
 	.owner = THIS_MODULE,
-	//.read = device_read,
-	//.write = device_write,
 	.unlocked_ioctl = device_ioctl,
 	.open = device_open,
 	.release = device_close,
@@ -451,17 +484,17 @@ static int sensor_close_dev(struct i2c_client *client){
 	buffer[0] = REG_ACTR;
 	buffer[1] = MODE_Standby;
 	buffer[2] = MODE_Off;
-	printk("%s\n",__FUNCTION__);	
+	GSE_FUN();	
 	return device_i2c_txdata(client,buffer, 3);
 }
 
 static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg){
-	printk("Gsensor enter 2 level suspend!!\n");
+	GSE_FUN();
 	return sensor_close_dev(client);
 }
 
 static int device_i2c_resume(struct i2c_client *client){
-	printk("Gsensor 2 level resume!!\n");
+	GSE_FUN();
 	return gsensor_reset(client);
 }
 
@@ -497,40 +530,19 @@ static int device_open(struct inode *inode, struct file *filp)
 {
 	return 0; 
 }
-/*
-static ssize_t device_write(struct file *filp, const char *buf, size_t count, loff_t *f_pos)
-{
-	return 0;
-}
 
-static ssize_t device_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
-{
-	s16 xyz[SENSOR_DATA_SIZE];
-	int i;
-
-	device_i2c_read_xyz(devdata.client, (s16 *)&xyz);
-	//offset compensation 
-	for(i = 0; i < SENSOR_DATA_SIZE; i++)
-		xyz[i] -= offset.v[i];
-	
-	if(copy_to_user(buf, &xyz, count)) 
-		return -EFAULT;
-		
-	return count;
-}
-*/
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	//void __user *argp = (void __user *)arg;
-	struct dmt_data *dmt = filp->private_data;
+	//struct i2c_client *client = (struct i2c_client*)filp->private_data;
+	//struct dmt_data *dmt = (struct dmt_data*)i2c_get_clientdata(client);	
 	
 	int err = 0, ret = 0, i;
 	int intBuf[SENSOR_DATA_SIZE];
 	s16 xyz[SENSOR_DATA_SIZE];
-	// check type
+	/* check type */
 	if (_IOC_TYPE(cmd) != IOCTL_MAGIC) return -ENOTTY;
 
-	// check user space pointer is valid
+	/* check user space pointer is valid */
 	if (_IOC_DIR(cmd) & _IOC_READ)
 		err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
 	else if (_IOC_DIR(cmd) & _IOC_WRITE)
@@ -540,18 +552,18 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch(cmd) 
 	{
 		case SENSOR_RESET:
-			gsensor_reset(dmt->client);
+			gsensor_reset(s_dmt->client);
 			return ret;
 
 		case SENSOR_CALIBRATION:
-			// get orientation info
+			/* get orientation info */
 			//if(copy_from_user(&intBuf, (int*)arg, sizeof(intBuf))) return -EFAULT;
 			gsensor_calibrate();
-			dmtprintk("Sensor_calibration:%d %d %d\n",offset.u.x,offset.u.y,offset.u.z);
-			// save file
+			GSE_LOG("Sensor_calibration:%d %d %d\n",offset.u.x,offset.u.y,offset.u.z);
+			/* save file */
 			gsensor_write_offset_to_file();
 			
-			// return the offset
+			/* return the offset */
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 				intBuf[i] = offset.v[i];
 
@@ -559,7 +571,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			return ret;
 		
 		case SENSOR_GET_OFFSET:
-			// get data from file 
+			/* get data from file */
 			gsensor_read_offset_from_file();
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 				intBuf[i] = offset.v[i];
@@ -570,42 +582,44 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		case SENSOR_SET_OFFSET:
 			ret = copy_from_user(&intBuf, (int *)arg, sizeof(intBuf));
 			gsensor_set_offset(intBuf);
-			// write in to file
+			/* write in to file */
 			gsensor_write_offset_to_file();
 			return ret;
 		
 		case SENSOR_READ_ACCEL_XYZ:
-			device_i2c_read_xyz(dmt->client, (s16 *)&xyz);
+			device_i2c_read_xyz(s_dmt->client, (s16 *)&xyz);
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 				intBuf[i] = xyz[i] - offset.v[i];
 			
 		  	ret = copy_to_user((int*)arg, &intBuf, sizeof(intBuf));
-			//PRINT_X_Y_Z(intBuf[0], intBuf[1], intBuf[2]);
 			return ret;
+			
 		case SENSOR_SETYPR:
-			if(copy_from_user(&intBuf, (int*)arg, sizeof(intBuf))) 
-			{
-				dmtprintk("%s:copy_from_user(&intBuf, (int*)arg, sizeof(intBuf)) ERROR, -EFAULT\n",__func__);			
+			if(copy_from_user(&intBuf, (int*)arg, sizeof(intBuf))) {
+				GSE_LOG("%s:copy_from_user(&intBuf, (int*)arg, sizeof(intBuf)) ERROR, -EFAULT\n",__func__);			
 				return -EFAULT;
 			}
 			input_report_abs(s_dmt->input, ABS_X, intBuf[0]);
 			input_report_abs(s_dmt->input, ABS_Y, -intBuf[1]);
 			input_report_abs(s_dmt->input, ABS_Z, -intBuf[2]);
 			input_sync(s_dmt->input);
-			dmtprintk(KERN_INFO "%s:SENSOR_SETYPR OK! x=%d,y=%d,z=%d\n",__func__,intBuf[0],intBuf[1],intBuf[2]);
+			GSE_LOG(KERN_INFO "%s:SENSOR_SETYPR OK! x=%d,y=%d,z=%d\n",__func__,intBuf[0],intBuf[1],intBuf[2]);
 			return 1;
+			
 		case SENSOR_GET_OPEN_STATUS:
-			dmtprintk(KERN_INFO "%s:Going into DMT_GetOpenStatus()\n",__func__);
-			DMT_GetOpenStatus();
-			dmtprintk(KERN_INFO "%s:DMT_GetOpenStatus() finished\n",__func__);
+			GSE_LOG(KERN_INFO "%s:Going into DMT_GetOpenStatus()\n",__func__);
+			DMT_GetOpenStatus(s_dmt->client);
+			GSE_LOG(KERN_INFO "%s:DMT_GetOpenStatus() finished\n",__func__);
 			return 1;
 			break;
+			
 		case SENSOR_GET_CLOSE_STATUS:
-			dmtprintk(KERN_INFO "%s:Going into DMT_GetCloseStatus()\n",__func__);
-			DMT_GetCloseStatus();	
-			dmtprintk(KERN_INFO "%s:DMT_GetCloseStatus() finished\n",__func__);
+			GSE_LOG(KERN_INFO "%s:Going into DMT_GetCloseStatus()\n",__func__);
+			DMT_GetCloseStatus(s_dmt->client);	
+			GSE_LOG(KERN_INFO "%s:DMT_GetCloseStatus() finished\n",__func__);
 			return 1;
-			break;		
+			break;	
+				
 		case SENSOR_GET_DELAY:
 		  	ret = copy_to_user((int*)arg, &interval, sizeof(interval));
 			return 1;
@@ -683,7 +697,7 @@ void device_i2c_read_xyz(struct i2c_client *client, s16 *xyz_p){
 		for(j = 0; j < 3; j++)
 			xyz_p[i] += sensorlayout[i][j] * xyzTmp[j];
 	}
-	dmtprintk(KERN_INFO "@DMT@ xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
+	GSE_LOG("xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
 }
 
 static void DMT_work_func(struct work_struct *delaywork)
@@ -693,24 +707,24 @@ static void DMT_work_func(struct work_struct *delaywork)
 	static int firsttime=0;
 	s16 xyz[SENSOR_DATA_SIZE];
 	
-	unsigned long t=atomic_read(&s_dmt->delay);
+	unsigned long t=atomic_read(&dmt->delay);
   	unsigned long dmt_delay = msecs_to_jiffies(t);
 	if(!firsttime){
 		gsensor_read_offset_from_file();	
 	 	firsttime=1;
 	}
 	
-	dmtprintk(KERN_INFO "t=%lu , dmt_delay=%lu\n", t, dmt_delay);
-  	device_i2c_read_xyz(s_dmt->client, (s16 *)&xyz);
+	GSE_LOG("t=%lu , dmt_delay=%lu\n", t, dmt_delay);
+  	device_i2c_read_xyz(dmt->client, (s16 *)&xyz);
   	for(i = 0; i < SENSOR_DATA_SIZE; ++i)
      		xyz[i] -= offset.v[i];
 
-	PRINT_X_Y_Z(xyz[0], xyz[1], xyz[2]);
-	PRINT_X_Y_Z(offset.u.x, offset.u.y, offset.u.z);
-	input_report_abs(s_dmt->input, ABS_X, xyz[0]);
-	input_report_abs(s_dmt->input, ABS_Y, -xyz[1]);
-	input_report_abs(s_dmt->input, ABS_Z, -xyz[2]);
-	input_sync(s_dmt->input);
+	GSE_LOG("@DMTRaw@ X/Y/Z axis: %04d , %04d , %04d\n", xyz[0], xyz[1], xyz[2]);
+	GSE_LOG("@Offset@ X/Y/Z axis: %04d , %04d , %04d\n", offset.u.x, offset.u.y, offset.u.z);
+	input_report_abs(dmt->input, ABS_X, xyz[0]);
+	input_report_abs(dmt->input, ABS_Y, -xyz[1]);
+	input_report_abs(dmt->input, ABS_Z, -xyz[2]);
+	input_sync(dmt->input);
 		
 	if(dmt_delay < 1)
 		dmt_delay = 1;
@@ -718,24 +732,24 @@ static void DMT_work_func(struct work_struct *delaywork)
 }
 
 static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c_device_id *id){
-	int i;
-	int ret = 0;
+	int i, ret = 0;
 	//struct dmt_data *s_dmt;
-	//struct device *device;
 	
+	GSE_FUN();
 	for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 		offset.v[i] = 0;
 		
 	if(!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)){
-		dmtprintk(KERN_INFO "%s, check_functionality failed.\n", __func__);
+		GSE_ERR("check_functionality failed.\n");
 		ret = -ENODEV;
 		goto exit0;
   	}
   	
   	/* Allocate memory for driver data */
 	s_dmt = kzalloc(sizeof(struct dmt_data), GFP_KERNEL);
+	memset(s_dmt, 0, sizeof(struct dmt_data));
 	if (s_dmt == NULL) {
-		dmtprintk(KERN_INFO "%s, alloc data failed.\n", __func__);
+		GSE_ERR("alloc data failed.\n");
 		ret = -ENOMEM;
 		goto exit1;
 	}
@@ -749,9 +763,9 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
 		goto exit2;
 		
 	/***** input *****/
-	ret = input_init();
-	if (ret) {
-		dmtprintk(KERN_INFO "%s:input_init fail, error code= %d\n",__func__,ret);
+	ret = input_init(client);
+	if (ret){
+		GSE_ERR("input_init fail, error code= %d\n",ret);
 		goto exit3;
 	}
 	
@@ -763,22 +777,20 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
 	mutex_init(&s_dmt->sensor_mutex);
 	/***** misc *****/
 	ret = misc_register(&dmt_device);
-	if (ret) 
-	{
-		dmtprintk(KERN_INFO "%s: dmt_dev register failed", __func__);
+	if (ret){
+		GSE_ERR("dmt_dev register failed");
 		goto exit5;
 	}
 
 	/***** sysfs *****/
     ret = create_sysfs_interfaces(s_dmt);
-    if (ret < 0) 
-	{
-        dmtprintk(KERN_INFO  "%s: create sysfs failed.", __func__);
+    if (ret < 0){
+        GSE_ERR("create sysfs failed.");
         goto exit6;
     }
 
-	INIT_DELAYED_WORK(&devdata.delaywork, DMT_work_func);
-	dmtprintk(KERN_INFO "DMT: INIT_DELAYED_WORK\n");
+	INIT_DELAYED_WORK(&s_dmt->delaywork, DMT_work_func);
+	GSE_LOG("DMT: INIT_DELAYED_WORK\n");
 	return 0;
 
 exit6:
@@ -812,18 +824,17 @@ void gsensor_write_offset_to_file(void){
 	set_fs(KERNEL_DS);
 	fp = filp_open(OffsetFileName, O_RDWR | O_CREAT, 0777);
 	if(IS_ERR(fp)){
-		dmtprintk(KERN_INFO "filp_open %s error!!.\n",OffsetFileName);
+		GSE_ERR("filp_open %s error!!.\n",OffsetFileName);
 	}
 	else{
-		dmtprintk(KERN_INFO "filp_open %s SUCCESS!!.\n",OffsetFileName);
+		GSE_LOG("filp_open %s SUCCESS!!.\n",OffsetFileName);
 		fp->f_op->write(fp,data,18, &fp->f_pos);
  		filp_close(fp,NULL);
 	}
 	set_fs(orgfs);
 }
 
-void gsensor_read_offset_from_file(void)
-{
+void gsensor_read_offset_from_file(void){
 	unsigned int orgfs;
 	char data[18];
 	struct file *fp;
@@ -833,9 +844,9 @@ void gsensor_read_offset_from_file(void)
 	set_fs(KERNEL_DS);
 
 	fp = filp_open(OffsetFileName, O_RDWR , 0);
-	dmtprintk(KERN_INFO "%s,try file open !\n",__func__);
+	GSE_FUN();
 	if(IS_ERR(fp)){
-		dmtprintk(KERN_INFO "%s:Sorry,file open ERROR !\n",__func__);
+		GSE_ERR("Sorry,file open ERROR !\n");
 		offset.u.x=0;offset.u.y=0;offset.u.z=0;
 #if AUTO_CALIBRATION
 		/* get acceleration average reading */
@@ -844,9 +855,9 @@ void gsensor_read_offset_from_file(void)
 #endif
 	}
 	else{
-		dmtprintk("filp_open %s SUCCESS!!.\n",OffsetFileName);
+		GSE_LOG("filp_open %s SUCCESS!!.\n",OffsetFileName);
 		fp->f_op->read(fp,data,18, &fp->f_pos);
-		dmtprintk("filp_read result %s\n",data);
+		GSE_LOG("filp_read result %s\n",data);
 		sscanf(data,"%d %d %d",&ux,&uy,&uz);
 		offset.u.x=ux;
 		offset.u.y=uy;
