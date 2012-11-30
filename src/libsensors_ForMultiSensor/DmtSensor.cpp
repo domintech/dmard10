@@ -26,33 +26,6 @@
 #include "DmtSensor.h"
 #define ACC_INPUT_NAME  "DMT_accel" 
 #define DMT_UNIT_CONVERSION(value)		((value) *(GRAVITY_EARTH / (1024.0f)))  //1g = 1024codes
-/*#ifdef SENSORHAL_ACC_D03
-#define ACC_DEV_PATH_NAME    "/dev/dmard03"
-char path_en[]="/sys/class/accelemeter/dmard03/enable_acc";
-char path_de[]="/sys/class/accelemeter/dmard03/delay_acc";
-#endif
-#ifdef SENSORHAL_ACC_D05
-#define ACC_DEV_PATH_NAME    "/dev/dmard05"
-char path_en[]="/sys/class/accelemeter/dmard05/enable_acc";
-char path_de[]="/sys/class/accelemeter/dmard05/delay_acc";
-#endif
-#ifdef SENSORHAL_ACC_D06 
-#define ACC_DEV_PATH_NAME    "/dev/dmard06"
-char path_en[]="/sys/class/accelemeter/dmard06/enable_acc";
-char path_de[]="/sys/class/accelemeter/dmard06/delay_acc";
-#endif
-#ifdef SENSORHAL_ACC_D07
-#define ACC_DEV_PATH_NAME    "/dev/dmard07"
-char path_en[]="/sys/class/accelemeter/dmard07/enable_acc";
-char path_de[]="/sys/class/accelemeter/dmard07/delay_acc";
-#endif
-#ifdef SENSORHAL_ACC_D08
-#define ACC_DEV_PATH_NAME    "/dev/dmard08"
-char path_en[]="/sys/class/accelemeter/dmard08/enable_acc";
-char path_de[]="/sys/class/accelemeter/dmard08/delay_acc";
-#endif
-#ifdef SENSORHAL_ACC_D10
-*/
 #define ACC_DEV_PATH_NAME    "/dev/dmt"
 char path_en[]="/sys/class/accelemeter/dmt/enable_acc";
 char path_de[]="/sys/class/accelemeter/dmt/delay_acc";
