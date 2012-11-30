@@ -19,6 +19,7 @@
  *
  *  V1.00	D10 First Release											date 2012/09/21
  *  V1.01	static struct dmt_data s_dmt Refresh to device_i2c_probe	date 2012/11/23
+ *  V1.02	0x0D* cck : adjustment 204.8KHz core clock					date 2012/11/30
  */
 #include "dmt10.h"
 #include <linux/module.h>
@@ -43,11 +44,11 @@
 #include <linux/gpio.h>
 #include <linux/platform_device.h>	
 static unsigned int interval;
-void gsensor_write_offset_to_file(struct i2c_client *client);
-void gsensor_read_offset_from_file(struct i2c_client *client);
+void gsensor_write_offset_to_file(void);
+void gsensor_read_offset_from_file(void);
 char OffsetFileName[] = "/data/misc/dmt/offset.txt";	/* FILE offset.txt */
 static raw_data offset;
-
+static struct dmt_data *s_dmt;
 static int device_init(void);
 static void device_exit(void);
 
@@ -372,9 +373,9 @@ int input_init(struct i2c_client *client){
 	return err;
 }
 
-int gsensor_calibrate(struct i2c_client *client)
+int gsensor_calibrate(void)
 {	
-	struct dmt_data *dmt = i2c_get_clientdata(client);
+	//struct dmt_data *dmt = i2c_get_clientdata(client);
 	raw_data avg;
 	int i, j;
 	long xyz_acc[SENSOR_DATA_SIZE];   
@@ -388,7 +389,7 @@ int gsensor_calibrate(struct i2c_client *client)
 		xyz_acc[i] = 0;
 
 	for(i = 0; i < AVG_NUM; i++) {      
-		device_i2c_read_xyz(dmt->client, (s16 *)&xyz);
+		device_i2c_read_xyz(s_dmt->client, (s16 *)&xyz);
 		for(j = 0; j < SENSOR_DATA_SIZE; ++j) 
 			xyz_acc[j] += xyz[j];
   	}
@@ -446,7 +447,7 @@ int gsensor_reset(struct i2c_client *client){
 	/* 5. AFEN = 1(AFE will powerdown after ADC) */
 	buffer[0] = REG_AFEM;
 	buffer[1] = VALUE_AFEM_AFEN_Normal;	
-	buffer[2] = VALUE_CKSEL_ODR_100_102;	
+	buffer[2] = VALUE_CKSEL_ODR_100_204;	
 	buffer[3] = VALUE_INTC;	
 	buffer[4] = VALUE_TAPNS_Ave_2;
 	buffer[5] = 0x00;	// DLYC, no delay timing
@@ -467,8 +468,6 @@ void gsensor_set_offset(int val[3]){
 
 struct file_operations dmt_g_sensor_fops = {
 	.owner = THIS_MODULE,
-	//.read = device_read,
-	//.write = device_write,
 	.unlocked_ioctl = device_ioctl,
 	.open = device_open,
 	.release = device_close,
@@ -534,8 +533,8 @@ static int device_open(struct inode *inode, struct file *filp)
 
 static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	struct i2c_client *client = (struct i2c_client*)filp->private_data;
-	struct dmt_data *dmt = (struct dmt_data*)i2c_get_clientdata(client);	
+	//struct i2c_client *client = (struct i2c_client*)filp->private_data;
+	//struct dmt_data *dmt = (struct dmt_data*)i2c_get_clientdata(client);	
 	
 	int err = 0, ret = 0, i;
 	int intBuf[SENSOR_DATA_SIZE];
@@ -553,16 +552,16 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch(cmd) 
 	{
 		case SENSOR_RESET:
-			gsensor_reset(dmt->client);
+			gsensor_reset(s_dmt->client);
 			return ret;
 
 		case SENSOR_CALIBRATION:
 			/* get orientation info */
 			//if(copy_from_user(&intBuf, (int*)arg, sizeof(intBuf))) return -EFAULT;
-			gsensor_calibrate(client);
+			gsensor_calibrate();
 			GSE_LOG("Sensor_calibration:%d %d %d\n",offset.u.x,offset.u.y,offset.u.z);
 			/* save file */
-			gsensor_write_offset_to_file(client);
+			gsensor_write_offset_to_file();
 			
 			/* return the offset */
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
@@ -573,7 +572,7 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		
 		case SENSOR_GET_OFFSET:
 			/* get data from file */
-			gsensor_read_offset_from_file(client);
+			gsensor_read_offset_from_file();
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 				intBuf[i] = offset.v[i];
 
@@ -584,11 +583,11 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			ret = copy_from_user(&intBuf, (int *)arg, sizeof(intBuf));
 			gsensor_set_offset(intBuf);
 			/* write in to file */
-			gsensor_write_offset_to_file(client);
+			gsensor_write_offset_to_file();
 			return ret;
 		
 		case SENSOR_READ_ACCEL_XYZ:
-			device_i2c_read_xyz(dmt->client, (s16 *)&xyz);
+			device_i2c_read_xyz(s_dmt->client, (s16 *)&xyz);
 			for(i = 0; i < SENSOR_DATA_SIZE; ++i)
 				intBuf[i] = xyz[i] - offset.v[i];
 			
@@ -600,23 +599,23 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				GSE_LOG("%s:copy_from_user(&intBuf, (int*)arg, sizeof(intBuf)) ERROR, -EFAULT\n",__func__);			
 				return -EFAULT;
 			}
-			input_report_abs(dmt->input, ABS_X, intBuf[0]);
-			input_report_abs(dmt->input, ABS_Y, -intBuf[1]);
-			input_report_abs(dmt->input, ABS_Z, -intBuf[2]);
-			input_sync(dmt->input);
+			input_report_abs(s_dmt->input, ABS_X, intBuf[0]);
+			input_report_abs(s_dmt->input, ABS_Y, -intBuf[1]);
+			input_report_abs(s_dmt->input, ABS_Z, -intBuf[2]);
+			input_sync(s_dmt->input);
 			GSE_LOG(KERN_INFO "%s:SENSOR_SETYPR OK! x=%d,y=%d,z=%d\n",__func__,intBuf[0],intBuf[1],intBuf[2]);
 			return 1;
 			
 		case SENSOR_GET_OPEN_STATUS:
 			GSE_LOG(KERN_INFO "%s:Going into DMT_GetOpenStatus()\n",__func__);
-			DMT_GetOpenStatus(client);
+			DMT_GetOpenStatus(s_dmt->client);
 			GSE_LOG(KERN_INFO "%s:DMT_GetOpenStatus() finished\n",__func__);
 			return 1;
 			break;
 			
 		case SENSOR_GET_CLOSE_STATUS:
 			GSE_LOG(KERN_INFO "%s:Going into DMT_GetCloseStatus()\n",__func__);
-			DMT_GetCloseStatus(client);	
+			DMT_GetCloseStatus(s_dmt->client);	
 			GSE_LOG(KERN_INFO "%s:DMT_GetCloseStatus() finished\n",__func__);
 			return 1;
 			break;	
@@ -711,7 +710,7 @@ static void DMT_work_func(struct work_struct *delaywork)
 	unsigned long t=atomic_read(&dmt->delay);
   	unsigned long dmt_delay = msecs_to_jiffies(t);
 	if(!firsttime){
-		gsensor_read_offset_from_file(dmt->client);	
+		gsensor_read_offset_from_file();	
 	 	firsttime=1;
 	}
 	
@@ -734,7 +733,7 @@ static void DMT_work_func(struct work_struct *delaywork)
 
 static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c_device_id *id){
 	int i, ret = 0;
-	struct dmt_data *s_dmt;
+	//struct dmt_data *s_dmt;
 	
 	GSE_FUN();
 	for(i = 0; i < SENSOR_DATA_SIZE; ++i)
@@ -814,7 +813,7 @@ static void __exit device_exit(void){
 	i2c_del_driver(&device_i2c_driver);
 }
 
-void gsensor_write_offset_to_file(struct i2c_client *client){
+void gsensor_write_offset_to_file(void){
 	char data[18];
 	unsigned int orgfs;
 	struct file *fp;
@@ -835,8 +834,7 @@ void gsensor_write_offset_to_file(struct i2c_client *client){
 	set_fs(orgfs);
 }
 
-void gsensor_read_offset_from_file(struct i2c_client *client)
-{
+void gsensor_read_offset_from_file(void){
 	unsigned int orgfs;
 	char data[18];
 	struct file *fp;
@@ -852,8 +850,8 @@ void gsensor_read_offset_from_file(struct i2c_client *client)
 		offset.u.x=0;offset.u.y=0;offset.u.z=0;
 #if AUTO_CALIBRATION
 		/* get acceleration average reading */
-		gsensor_calibrate(client);
-		gsensor_write_offset_to_file(client);
+		gsensor_calibrate();
+		gsensor_write_offset_to_file();
 #endif
 	}
 	else{
