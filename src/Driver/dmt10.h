@@ -2,8 +2,8 @@
  * @file include/linux/dmt10.h
  * @brief DMT g-sensor Linux device driver
  * @author Domintech Technology Co., Ltd (http://www.domintech.com.tw)
- * @version 1.00
- * @date 2012/9/21
+ * @version 1.02
+ * @date 2012/12/10
  *
  * @section LICENSE
  *
@@ -49,6 +49,7 @@
 #define INPUT_NAME_ACC			"DMT_accel"	/* Input Device Name  */
 #define DEVICE_I2C_NAME 		"dmt"		/* Device name for DMARD10 misc. device */
 #define REG_ACTR 				0x00
+#define REG_WDAL 				0x01
 #define REG_TAPNS				0x0f
 #define REG_MISC2				0x1f
 #define REG_AFEM 				0x0c
@@ -57,6 +58,7 @@
 #define REG_STADR 				0x12
 #define REG_STAINT 				0x1C
 #define REG_PD					0x21
+#define REG_TCGYZ				0x26
 #define REG_X_OUT 				0x41
 
 #define MODE_Off				0x00
@@ -67,6 +69,7 @@
 #define MODE_Trigger			0x0a
 #define MODE_ReadOTP			0x12
 #define MODE_WriteOTP			0x22
+#define MODE_WriteOTPBuf		0x42
 #define MODE_ResetDataPath		0x82
 
 #define VALUE_STADR					0x55
@@ -162,8 +165,8 @@ struct dmt_data {
   	struct class 			*class;
   	struct input_dev 		*input;
 	struct i2c_client 		*client;
-	struct delayed_work 	delaywork;	//work;
-	struct work_struct 		work;	//irq_work;
+	struct delayed_work 	delaywork;	
+	struct work_struct 		work;	
 	struct mutex 			sensor_mutex;
 	wait_queue_head_t		open_wq;
 	atomic_t				active;

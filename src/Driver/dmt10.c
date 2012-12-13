@@ -2,7 +2,7 @@
  * @file drivers/misc/dmt10.c
  * @brief DMT g-sensor Linux device driver
  * @author Domintech Technology Co., Ltd (http://www.domintech.com.tw)
- * @version 1.00
+ * @version 1.03
  *
  * @section LICENSE
  *
@@ -19,7 +19,8 @@
  *
  *  V1.00	D10 First Release											date 2012/09/21
  *  V1.01	static struct dmt_data s_dmt Refresh to device_i2c_probe	date 2012/11/23
- *  V1.02	0x0D* cck : adjustment 204.8KHz core clock					date 2012/11/30
+ *  V1.02	0x0D cck : adjustment 204.8KHz core clock					date 2012/11/30
+ *  V1.03	write TCGYZ & TCGX : set value to 0x00						date 2012/12/10 
  */
 #include "dmt10.h"
 #include <linux/module.h>
@@ -453,7 +454,23 @@ int gsensor_reset(struct i2c_client *client){
 	buffer[5] = 0x00;	// DLYC, no delay timing
 	buffer[6] = 0x07;	// INTD=1 (push-pull), INTA=1 (active high), AUTOT=1 (enable T)
 	device_i2c_txdata(client, buffer, 7);
-	/* 6. Activation mode */
+	/* 6. write TCGYZ & TCGX */
+	buffer[0] = REG_WDAL;	// REG:0x01
+	buffer[1] = 0x00;		// set TC of Y,Z gain value
+	buffer[2] = 0x00;		// set TC of X gain value
+	buffer[3] = 0x03;		// Temperature coefficient of X,Y,Z gain
+	device_i2c_txdata(client, buffer, 4);
+	
+	buffer[0] = REG_ACTR;			// REG:0x00
+	buffer[1] = MODE_Standby;		// Standby
+	buffer[2] = MODE_WriteOTPBuf;	// WriteOTPBuf 
+	buffer[3] = MODE_Standby;		// Standby
+	device_i2c_txdata(client, buffer, 4);	
+	buffer[0] = REG_TCGYZ;
+	device_i2c_rxdata(client, buffer, 2);
+	GSE_LOG(" TCGYZ = %d, TCGX = %d  \n", buffer[0], buffer[1]);
+	
+	/* 7. Activation mode */
 	buffer[0] = REG_ACTR;
 	buffer[1] = MODE_Active;
 	device_i2c_txdata(client, buffer, 2);
