@@ -128,24 +128,24 @@
 #define CONFIG_GSEN_LAYOUT_PAT_6	0
 #define CONFIG_GSEN_LAYOUT_PAT_7	0
 #define CONFIG_GSEN_LAYOUT_PAT_8	0
-
+/* Transformation matrix for chip mounting position */
 s16 sensorlayout[3][3] = {
 #if CONFIG_GSEN_LAYOUT_PAT_1
-    { 1, 0, 0},	{ 0, 1,	0}, { 0, 0, 1},
+    { 1, 0, 0},	{ 0,-1,	0}, { 0, 0,-1}, /* top/upper-left     */
 #elif CONFIG_GSEN_LAYOUT_PAT_2
-    { 0, 1, 0}, {-1, 0,	0}, { 0, 0, 1},
+    { 0, 1, 0}, { 1, 0,	0}, { 0, 0,-1}, /* top/lower-left     */
 #elif CONFIG_GSEN_LAYOUT_PAT_3
-    {-1, 0, 0},	{ 0,-1,	0}, { 0, 0, 1},
+    {-1, 0, 0},	{ 0, 1,	0}, { 0, 0,-1}, /* top/upper-right    */
 #elif CONFIG_GSEN_LAYOUT_PAT_4
-    { 0,-1, 0},	{ 1, 0,	0}, { 0, 0, 1},
+    { 0,-1, 0},	{-1, 0,	0}, { 0, 0,-1}, /* top/upper-right    */
 #elif CONFIG_GSEN_LAYOUT_PAT_5
-    {-1, 0, 0},	{ 0, 1,	0}, { 0, 0,-1},
+    {-1, 0, 0},	{ 0,-1,	0}, { 0, 0, 1}, /* bottom/upper-left  */
 #elif CONFIG_GSEN_LAYOUT_PAT_6
-    { 0,-1, 0}, {-1, 0,	0}, { 0, 0,-1},
+    { 0,-1, 0}, {-1, 0,	0}, { 0, 0, 1}, /* bottom/lower-left  */
 #elif CONFIG_GSEN_LAYOUT_PAT_7
-    { 1, 0, 0},	{ 0,-1,	0}, { 0, 0,-1},
+    { 1, 0, 0},	{ 0, 1,	0}, { 0, 0, 1}, /* bottom/lower-right */
 #elif CONFIG_GSEN_LAYOUT_PAT_8
-    { 0, 1, 0},	{ 1, 0,	0}, { 0, 0,-1},
+    { 0, 1, 0},	{ 1, 0,	0}, { 0, 0, 1}, /* bottom/upper-right */
 #endif
 };
 
@@ -159,8 +159,6 @@ typedef union {
 } raw_data;
 
 struct dmt_data {
-	dev_t 					devno;
-	struct cdev 			cdev;
 	struct device			*class_dev;
   	struct class 			*class;
   	struct input_dev 		*input;
@@ -168,6 +166,8 @@ struct dmt_data {
 	struct delayed_work 	delaywork;	
 	struct work_struct 		work;	
 	struct mutex 			sensor_mutex;
+	raw_data 				last;
+	raw_data 				offset;
 	wait_queue_head_t		open_wq;
 	atomic_t				active;
 	atomic_t 				delay;
