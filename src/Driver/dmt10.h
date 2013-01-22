@@ -35,6 +35,7 @@
 #define DMT_DEBUG_DATA
 #define GSE_TAG                  "[DMT_Gsensor]"
 #ifdef DMT_DEBUG_DATA
+#define ADR_MAX (0x16)
 #define GSE_ERR(fmt, args...)    printk(KERN_ERR GSE_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
 #define GSE_LOG(fmt, args...)    printk(KERN_INFO GSE_TAG fmt, ##args)
 #define GSE_FUN(f)               printk(KERN_INFO GSE_TAG" %s: %s: %i\n", __FILE__, __func__, __LINE__)
@@ -119,19 +120,19 @@
 #define SENSOR_GET_CLOSE_STATUS	_IO(IOCTL_MAGIC,  7)
 #define SENSOR_GET_DELAY		_IOR(IOCTL_MAGIC,  8, unsigned int*)
 #define SENSOR_MAXNR 8
-
 /* Default parameters */
 #define DMT_DMARD10_DEFAULT_POSITION	0
+static uint8_t reg[ADR_MAX];
 /* Transformation matrix for chip mounting position */
 static const int dmt_position_map[][3][3] = {
-    { { 1, 0, 0},	{ 0,-1,	0},	{ 0, 0,-1},	}, /* top/upper-left		*/
-    { { 0, 1, 0},	{ 1, 0,	0},	{ 0, 0,-1},	}, /* top/lower-left		*/
-    { {-1, 0, 0},	{ 0, 1,	0}, { 0, 0,-1},	}, /* top/upper-right	*/
-    { { 0,-1, 0},	{-1, 0,	0}, { 0, 0,-1},	}, /* top/upper-right	*/
-    { {-1, 0, 0},	{ 0,-1,	0}, { 0, 0, 1},	}, /* bottom/upper-right	*/
-    { { 0,-1, 0},	{-1, 0,	0}, { 0, 0, 1},	}, /* bottom/upper-left	*/
-    { { 1, 0, 0},	{ 0, 1,	0}, { 0, 0, 1},	}, /* bottom/lower-right	*/
-    { { 0, 1, 0},	{ 1, 0,	0}, { 0, 0, 1},	}, /* bottom/lower-left	*/
+    {	{ 1, 0,	0},	{ 0,-1,	0},	{ 0, 0,-1},	}, /* top/upper-left	*/
+    {	{ 0, 1,	0},	{ 1, 0,	0},	{ 0, 0,-1},	}, /* top/lower-left	*/
+    {	{-1, 0,	0},	{ 0, 1,	0}, { 0, 0,-1},	}, /* top/lower-right	*/
+    {	{ 0,-1,	0},	{-1, 0,	0}, { 0, 0,-1},	}, /* top/upper-right	*/
+    {	{-1, 0,	0},	{ 0,-1,	0}, { 0, 0, 1},	}, /* bottom/upper-right*/
+    {	{ 0,-1,	0},	{-1, 0,	0}, { 0, 0, 1},	}, /* bottom/upper-left	*/
+    {	{ 1, 0,	0},	{ 0, 1,	0}, { 0, 0, 1},	}, /* bottom/lower-right*/
+    {	{ 0, 1,	0},	{ 1, 0,	0}, { 0, 0, 1},	}, /* bottom/lower-left	*/
 };
 typedef union {
 	struct {
@@ -149,14 +150,20 @@ struct dmt_data {
 	struct i2c_client 		*client;
 	struct delayed_work 	delaywork;	
 	struct work_struct 		work;	
-	struct mutex 			data_mutex; //data_mutex
+	struct mutex 			data_mutex; 
+	struct mutex			enable_mutex; //for suspend
 	raw_data 				last;  //RawData
 	raw_data 				offset; //offset
 	wait_queue_head_t		open_wq;
 	atomic_t				active;
 	atomic_t 				delay;
 	atomic_t 				enable;
-	int 					position;
+	int						position;
+	atomic_t				addr;
+#ifdef DMT_DEBUG_DATA
+	struct mutex suspend_mutex;
+	int suspend;
+#endif
 };
 
 #define ACC_DATA_FLAG		0

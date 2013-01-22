@@ -48,7 +48,6 @@ static unsigned int interval;
 void gsensor_write_offset_to_file(void);
 void gsensor_read_offset_from_file(void);
 char OffsetFileName[] = "/data/misc/dmt/offset.txt";	/* FILE offset.txt */
-//static raw_data offset;
 static struct dmt_data *s_dmt;
 static int device_init(void);
 static void device_exit(void);
@@ -292,7 +291,118 @@ static ssize_t DMT_id_show(struct device *dev,
 	char str[8]={GSENSOR_ID};	
 	return sprintf(buf, "%s\n", str);
 }
+/* sysfs debug_suspend show & store */
+#ifdef DMT_DEBUG_DATA
+static ssize_t DMT_debug_suspend_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
+{
+	struct input_dev *input = to_input_dev(dev);
+	struct dmt_data *dmt = input_get_drvdata(input);
+	int suspend = dmt->suspend;
 
+	mutex_lock(&dmt->suspend_mutex);
+	suspend = sprintf(buf, "%d\n", dmt->suspend);
+	mutex_unlock(&dmt->suspend_mutex);
+	return suspend;
+}
+
+static ssize_t DMT_debug_suspend_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct input_dev *input = to_input_dev(dev);
+	struct dmt_data *dmt = input_get_drvdata(input);
+	unsigned long suspend;
+	pm_message_t msg;
+	int ret;
+
+	ret = strict_strtoul(buf, 10, &suspend);
+	if (ret < 0)
+		return count;
+
+	memset(&msg, 0, sizeof(pm_message_t));
+
+	mutex_lock(&dmt->suspend_mutex);
+
+	if (suspend) {
+		device_i2c_suspend(dmt->client, msg);
+		dmt->suspend = 1;
+	} else {
+		device_i2c_resume(dmt->client);
+		dmt->suspend = 0;
+	}
+
+	mutex_unlock(&dmt->suspend_mutex);
+
+	return count;
+}
+/* sysfs reg show & store */
+static ssize_t DMT_reg_show(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct dmt_data *dmt = dev_get_drvdata(dev);
+	int err;
+	unsigned char i2c[1];
+
+	i2c[0] = (unsigned char)atomic_read(&dmt->addr);
+	err = device_i2c_rxdata(dmt->client, i2c, 1);
+	if (err < 0)
+		return err;
+
+	return sprintf(buf, "0x%02X\n", i2c[0]);
+}
+
+static ssize_t DMT_reg_store(struct device *dev,
+						struct device_attribute *attr,
+						char const *buf,
+						size_t count)
+{
+	struct dmt_data *dmt = dev_get_drvdata(dev);
+	int addr = 0;
+
+	if (NULL == buf)
+		return -EINVAL;
+
+	if (0 == count)
+		return 0;
+
+	if (false == get_value_as_int(buf, count, &addr))
+		return -EINVAL;
+
+	if (addr < 0 || 128 < addr)
+		return -EINVAL;
+
+	atomic_set(&dmt->addr, addr);
+
+	return 1;
+}
+#endif /* DEBUG */
+/*********************************************************************
+ *
+ * SysFS attribute functions
+ *
+ * directory : /sys/class/accelemeter/dmt/
+ * files :
+ *  - enable_acc	[rw]	[t] : enable flag for accelerometer
+ *  - delay_acc		[rw]	[t] : delay in nanosecond for accelerometer
+ *  - position		[rw]	[t] : chip mounting position
+ *  - offset		[rw]	[t] : offset
+ *  - data			[r]		[t] : raw data
+ *  - id			[r]		[t] : chip id
+ *
+ * debug :
+ *  - debug_suspend	[w]		[t] : suspend test
+ *  - reg        [rw] [t] : Read register
+ *
+ * [rw]= read/write
+ * [r] = read only
+ * [w] = write only
+ * [b] = binary format
+ * [t] = text format
+ */
+ 
 static struct device_attribute DMT_attributes[] = {
 	__ATTR(enable_acc,		0660, DMT_enable_show,				DMT_enable_store),
 	__ATTR(delay_acc,		0660, DMT_delay_show,				DMT_delay_store),
@@ -301,8 +411,8 @@ static struct device_attribute DMT_attributes[] = {
 	__ATTR(data,			0660, DMT_acc_private_data_show,	NULL),
 	__ATTR(id,				0660, DMT_id_show,  				NULL),
 #ifdef DMT_DEBUG_DATA
-	//__ATTR(debug_reg,		0660, yas_debug_reg_show,  NULL),
-	//__ATTR(debug_suspend,	0660, DMT_debug_suspend_show,DMT_debug_suspend_store),
+	__ATTR(debug_suspend,	0660, DMT_debug_suspend_show,DMT_debug_suspend_store),
+	__ATTR(reg,				0660, DMT_reg_show, DMT_reg_store),
 #endif /* DEBUG */	
 	__ATTR_NULL,
 };
@@ -586,13 +696,23 @@ static int sensor_close_dev(struct i2c_client *client){
 }
 
 static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg){
+	struct dmt_data *dmt = i2c_get_clientdata(client);
+	mutex_lock(&dmt->enable_mutex);
+	dmt->suspend = 0;
+	mutex_unlock(&dmt->enable_mutex);
+	sensor_close_dev(client);
 	GSE_FUN();
-	return sensor_close_dev(client);
+	return 0;//sensor_close_dev(client);
 }
 
 static int device_i2c_resume(struct i2c_client *client){
+	struct dmt_data *dmt = i2c_get_clientdata(client);
+	mutex_lock(&dmt->enable_mutex);
+	dmt->suspend = 1;
+	mutex_unlock(&dmt->enable_mutex);
+	gsensor_reset(client);
 	GSE_FUN();
-	return gsensor_reset(client);
+	return 0;
 }
 
 static int __devexit device_i2c_remove(struct i2c_client *client){
@@ -603,8 +723,6 @@ static const struct i2c_device_id device_i2c_ids[] = {
 	{DEVICE_I2C_NAME, 0},
 	{}   
 };
-
-//MODULE_DEVICE_TABLE(i2c, device_i2c_ids);
 
 static struct i2c_driver device_i2c_driver = 
 {
@@ -795,11 +913,10 @@ static int device_i2c_read_xyz(struct i2c_client *client, s16 *xyz_p){
 	for(i = 0; i < SENSOR_DATA_SIZE; ++i){
 		for(j = 0; j < SENSOR_DATA_SIZE; j++){
 			xyz_p[i] += xyzTmp[j] * dmt_position_map[pos][i][j];
-			printk(KERN_INFO"%04d , %04d ,%d ", xyz_p[i], xyzTmp[j] , dmt_position_map[pos][i][j]);
+			GSE_LOG("%04d, %04d,%d \n", xyz_p[i], xyzTmp[j], dmt_position_map[pos][i][j]);
 			}
-		GSE_LOG("\n");
 	}
-	GSE_LOG("xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
+	//GSE_LOG("xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
 	return 0;
 }
 
@@ -875,10 +992,15 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
 	
 	/* initialize variables in dmt_data */
 	mutex_init(&s_dmt->data_mutex);
+	mutex_init(&s_dmt->enable_mutex);
+#ifdef DMT_DEBUG_DATA
+	mutex_init(&s_dmt->suspend_mutex);
+#endif
 	init_waitqueue_head(&s_dmt->open_wq);
 	atomic_set(&s_dmt->active, 0);
 	atomic_set(&s_dmt->enable, 0);
 	atomic_set(&s_dmt->delay, 0);
+	atomic_set(&s_dmt->addr, 0);
 	s_dmt->position = DMT_DMARD10_DEFAULT_POSITION;
 	GSE_LOG("DMT_DMARD10_DEFAULT_POSITION: %d\n", s_dmt->position);
 	s_dmt->position = (CONFIG_INPUT_DMT_ACCELEROMETER_POSITION);
