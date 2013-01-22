@@ -61,10 +61,12 @@ static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg);
 static int device_i2c_resume(struct i2c_client *client);
 static int __devinit device_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id);
 static int __devexit device_i2c_remove(struct i2c_client *client);
-void device_i2c_read_xyz(struct i2c_client *client, s16 *xyz);
+static int device_i2c_read_xyz(struct i2c_client *client, s16 *xyz);
 static int device_i2c_rxdata(struct i2c_client *client, unsigned char *rxDat, int length);
 static int device_i2c_txdata(struct i2c_client *client, unsigned char *txData, int length);
 
+static int dmt_get_position(void);
+static int dmt_set_position(int position);
 static int DMT_GetOpenStatus(struct i2c_client *client){
 	struct dmt_data *dmt = i2c_get_clientdata(client);	
 	GSE_LOG("start active=%d\n",dmt->active.counter);
@@ -148,7 +150,7 @@ static bool get_value_as_int64(char const *buf, size_t size, long long *value)
 	*value = tmp;
 	return true;
 }
-
+/* sysfs enable show & store */
 static ssize_t dmt_sysfs_enable_show(
 	struct dmt_data *dmt, char *buf, int pos)
 {
@@ -164,7 +166,7 @@ static ssize_t dmt_sysfs_enable_store(
 	int en = 0;
 	if (NULL == buf)
 		return -EINVAL;
-	GSE_LOG("buf=%x %x\n", buf[0], buf[1]);
+	//GSE_LOG("buf=%x %x\n", buf[0], buf[1]);
 	if (0 == count)
 		return 0;
 
@@ -178,7 +180,6 @@ static ssize_t dmt_sysfs_enable_store(
 	return count;
 }
 
-/***** Acceleration ***/
 static ssize_t DMT_enable_show(struct device *dev, struct device_attribute *attr, char *buf){
 	return dmt_sysfs_enable_show( dev_get_drvdata(dev), buf, ACC_DATA_FLAG);
 }
@@ -187,7 +188,7 @@ static ssize_t DMT_enable_store( struct device *dev, struct device_attribute *at
 	return dmt_sysfs_enable_store( dev_get_drvdata(dev), buf, count, ACC_DATA_FLAG);
 }
 
-/***** sysfs delay **************************************************/
+/* sysfs delay show & store*/
 static ssize_t dmt_sysfs_delay_show( struct dmt_data *dmt, char *buf, int pos){
 	return sprintf(buf, "%d\n", atomic_read(&dmt->delay));
 }
@@ -210,7 +211,6 @@ static ssize_t dmt_sysfs_delay_store( struct dmt_data *dmt, char const *buf, siz
 	return count;
 }
 
-/***** Accelerometer ***/
 static ssize_t DMT_delay_show( struct device *dev,
 					struct device_attribute *attr, 
 					char *buf)
@@ -225,8 +225,35 @@ static ssize_t DMT_delay_store( struct device *dev,
 {
 	return dmt_sysfs_delay_store( dev_get_drvdata(dev), buf, count, ACC_DATA_FLAG);
 }
+/* sysfs position show & store */
+static ssize_t DMT_position_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	//struct input_dev *input = to_input_dev(dev);
+	//struct dmt_data *data = input_get_drvdata(input);
 
-/***** offset show & store ***/
+	return sprintf(buf, "%d\n", dmt_get_position());
+}
+
+static ssize_t DMT_position_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
+{
+	//struct input_dev *input = to_input_dev(dev);
+	//struct dmt_data *data = input_get_drvdata(input);
+	unsigned long position;
+	int ret;
+
+	ret = strict_strtoul(buf, 10, &position);
+	if (ret < 0)
+		return count;
+
+	dmt_set_position(position);
+	return count;
+}
+/* sysfs offset show & store */
 static ssize_t DMT_offset_show(struct device *dev,
 				   struct device_attribute *attr,
 				   char *buf)
@@ -242,31 +269,40 @@ static ssize_t DMT_offset_store(struct device *dev,
 	sscanf(buf, "%d %d %d", (int *)&s_dmt->offset.v[0], (int *)&s_dmt->offset.v[1], (int *)&s_dmt->offset.v[2]);
 	return count;
 } 
-
-/***** data show ***/
+/* sysfs data show */
 static ssize_t DMT_acc_private_data_show(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
 {
 	struct input_dev *input = to_input_dev(dev);
 	struct dmt_data *dmt = input_get_drvdata(input);
+	raw_data accel;
+	
+	mutex_lock(&dmt->data_mutex);
+	accel = dmt->last;
+	mutex_unlock(&dmt->data_mutex);
 
-	//mutex_lock(&data->data_mutex);
-	//accel = data->last;
-	//mutex_unlock(&data->data_mutex);
-
-	return 0;//sprintf(buf, "%d %d %d\n"
-		       //, accel.xyz.v[0], accel.xyz.v[1], accel.xyz.v[2]);
+	return sprintf(buf, "%d %d %d\n", s_dmt->last.v[0], s_dmt->last.v[1], s_dmt->last.v[2]);
+}
+/* sysfs id show */
+static ssize_t DMT_id_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	char str[8]={GSENSOR_ID};	
+	return sprintf(buf, "%s\n", str);
 }
 
 static struct device_attribute DMT_attributes[] = {
-	__ATTR(enable_acc, 0660, DMT_enable_show, DMT_enable_store),
-	__ATTR(delay_acc,  0660, DMT_delay_show,  DMT_delay_store),
-	__ATTR(offset,  0660, DMT_offset_show,  DMT_offset_store),
-	__ATTR(date,  0660, DMT_acc_private_data_show,  NULL),
-#if DEBUG
-	__ATTR(debug_reg,  0660,  yas_acc_debug_reg_show,  NULL),
-	__ATTR(debug_suspend,  0660, DMT_acc_debug_suspend_show,  DMT_acc_debug_suspend_store),
+	__ATTR(enable_acc,		0660, DMT_enable_show,				DMT_enable_store),
+	__ATTR(delay_acc,		0660, DMT_delay_show,				DMT_delay_store),
+	__ATTR(position,		0660, DMT_position_show,			DMT_position_store),
+	__ATTR(offset,			0660, DMT_offset_show,				DMT_offset_store),
+	__ATTR(data,			0660, DMT_acc_private_data_show,	NULL),
+	__ATTR(id,				0660, DMT_id_show,  				NULL),
+#ifdef DMT_DEBUG_DATA
+	//__ATTR(debug_reg,		0660, yas_debug_reg_show,  NULL),
+	//__ATTR(debug_suspend,	0660, DMT_debug_suspend_show,DMT_debug_suspend_store),
 #endif /* DEBUG */	
 	__ATTR_NULL,
 };
@@ -392,20 +428,17 @@ static void remove_sysfs_interfaces(struct dmt_data *dmt)
 
 int input_init(struct i2c_client *client){
 	struct dmt_data *dmt = i2c_get_clientdata(client);
-	int err=0;
-	dmt->input=input_allocate_device();
-	if (!dmt->input){
-		GSE_ERR("input device allocate ERROR !!\n");
+	int err = 0;
+	dmt->input = input_allocate_device();
+	if (!dmt->input)
 		return -ENOMEM;
-	}
-	else
-		GSE_LOG("input device allocate Success !!\n");
+		
 	/* Setup input device */
 	set_bit(EV_ABS, dmt->input->evbit);
 	/* Accelerometer [-78.5, 78.5]m/s2 in Q16 */
-	input_set_abs_params(dmt->input, ABS_X, -5144576, 5144576, 0, 0);
-	input_set_abs_params(dmt->input, ABS_Y, -5144576, 5144576, 0, 0);
-	input_set_abs_params(dmt->input, ABS_Z, -5144576, 5144576, 0, 0);
+	input_set_abs_params(dmt->input, ABS_X, ABSMIN, ABSMAX, 0, 0);
+	input_set_abs_params(dmt->input, ABS_Y, ABSMIN, ABSMAX, 0, 0);
+	input_set_abs_params(dmt->input, ABS_Z, ABSMIN, ABSMAX, 0, 0);
 	/* Set InputDevice Name */
 	dmt->input->name = INPUT_NAME_ACC;
 	/* Register */
@@ -460,6 +493,7 @@ int gsensor_calibrate(void)
 }
 
 int gsensor_reset(struct i2c_client *client){
+	//struct dmt_data *dmt = i2c_get_clientdata(client);
 	unsigned char buffer[7], buffer2[2];
 	/* 1. check D10 , VALUE_STADR = 0x55 , VALUE_STAINT = 0xAA */
 	buffer[0] = REG_STADR;
@@ -744,23 +778,29 @@ void device_i2c_merge_register_values(struct i2c_client *client, s16 *val, u8 ms
 	device_i2c_correct_accel_sign(val);
 }
 
-void device_i2c_read_xyz(struct i2c_client *client, s16 *xyz_p){	
+static int device_i2c_read_xyz(struct i2c_client *client, s16 *xyz_p){	
 	u8 buffer[11];
 	s16 xyzTmp[SENSOR_DATA_SIZE];
+	int pos = s_dmt->position;
 	int i, j;
 	/* get xyz high/low bytes, 0x12 */
 	buffer[0] = REG_STADR;
-	device_i2c_rxdata(client, buffer, 10);
-    
 	/* merge to 10-bits value */
+	device_i2c_rxdata(client, buffer, 10);
 	for(i = 0; i < SENSOR_DATA_SIZE; ++i){
 		xyz_p[i] = 0;
-		device_i2c_merge_register_values(client, (xyzTmp + i), buffer[2*(i+1)+1], buffer[2*(i+1)]);
+		device_i2c_merge_register_values(client, (xyzTmp + i), buffer[2*(i+1)+1], buffer[2*(i+1)]);;
+	}
 	/* transfer to the default layout */
-		for(j = 0; j < 3; j++)
-			xyz_p[i] += sensorlayout[i][j] * xyzTmp[j];
+	for(i = 0; i < SENSOR_DATA_SIZE; ++i){
+		for(j = 0; j < SENSOR_DATA_SIZE; j++){
+			xyz_p[i] += xyzTmp[j] * dmt_position_map[pos][i][j];
+			printk(KERN_INFO"%04d , %04d ,%d ", xyz_p[i], xyzTmp[j] , dmt_position_map[pos][i][j]);
+			}
+		GSE_LOG("\n");
 	}
 	GSE_LOG("xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
+	return 0;
 }
 
 static void DMT_work_func(struct work_struct *delaywork)
@@ -768,25 +808,26 @@ static void DMT_work_func(struct work_struct *delaywork)
 	struct dmt_data *dmt = container_of(delaywork, struct dmt_data, delaywork.work);
 	int i;
 	static int firsttime=0;
-	s16 xyz[SENSOR_DATA_SIZE];
-	
-	unsigned long t=atomic_read(&dmt->delay);
-  	unsigned long dmt_delay = msecs_to_jiffies(t);
+	raw_data xyz;
+  	unsigned long dmt_delay = msecs_to_jiffies(atomic_read(&dmt->delay));
 	if(!firsttime){
 		gsensor_read_offset_from_file();	
 	 	firsttime=1;
 	}
 	
-	GSE_LOG("t=%lu , dmt_delay=%lu\n", t, dmt_delay);
-  	device_i2c_read_xyz(dmt->client, (s16 *)&xyz);
+  	device_i2c_read_xyz(dmt->client, (s16 *)&xyz.v);
+  	/* dmt->last = RawData - Offset */
+  	mutex_lock(&dmt->data_mutex);
   	for(i = 0; i < SENSOR_DATA_SIZE; ++i)
-     		xyz[i] -= s_dmt->offset.v[i];
-
-	GSE_LOG("@DMTRaw@ X/Y/Z axis: %04d , %04d , %04d\n", xyz[0], xyz[1], xyz[2]);
-	GSE_LOG("@Offset@ X/Y/Z axis: %04d , %04d , %04d\n", s_dmt->offset.u.x, s_dmt->offset.u.y, s_dmt->offset.u.z);
-	input_report_abs(dmt->input, ABS_X, xyz[0]);
-	input_report_abs(dmt->input, ABS_Y, xyz[1]);
-	input_report_abs(dmt->input, ABS_Z, xyz[2]);
+     		dmt->last.v[i] = xyz.v[i] - dmt->offset.v[i];
+	mutex_unlock(&dmt->data_mutex);
+	
+	GSE_LOG("@DMTRaw    @ X/Y/Z axis: %04d , %04d , %04d\n", xyz.v[0], xyz.v[1], xyz.v[2]);
+	GSE_LOG("@Offset    @ X/Y/Z axis: %04d , %04d , %04d\n", dmt->offset.u.x, dmt->offset.u.y, dmt->offset.u.z);
+	GSE_LOG("@Raw-Offset@ X/Y/Z axis: %04d , %04d , %04d ,dmt_delay=%d\n", dmt->last.u.x, dmt->last.u.y, dmt->last.u.z, atomic_read(&dmt->delay));
+	input_report_abs(dmt->input, ABS_X, dmt->last.v[0]);
+	input_report_abs(dmt->input, ABS_Y, dmt->last.v[1]);
+	input_report_abs(dmt->input, ABS_Z, dmt->last.v[2]);
 	input_sync(dmt->input);
 		
 	if(dmt_delay < 1)
@@ -833,11 +874,15 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
 	}
 	
 	/* initialize variables in dmt_data */
+	mutex_init(&s_dmt->data_mutex);
 	init_waitqueue_head(&s_dmt->open_wq);
 	atomic_set(&s_dmt->active, 0);
 	atomic_set(&s_dmt->enable, 0);
 	atomic_set(&s_dmt->delay, 0);
-	mutex_init(&s_dmt->sensor_mutex);
+	s_dmt->position = DMT_DMARD10_DEFAULT_POSITION;
+	GSE_LOG("DMT_DMARD10_DEFAULT_POSITION: %d\n", s_dmt->position);
+	s_dmt->position = (CONFIG_INPUT_DMT_ACCELEROMETER_POSITION);
+	GSE_LOG("CONFIG_INPUT_DMT_ACCELEROMETER_POSITION: %d\n", s_dmt->position);
 	/* misc */
 	if (misc_register(&dmt_device) < 0){
 		GSE_ERR("dmt_dev register failed");
@@ -876,6 +921,17 @@ static int __init device_init(void){
 static void __exit device_exit(void){
 	GSE_LOG("D10 gsensor driver: release.\n");
 	i2c_del_driver(&device_i2c_driver);
+}
+
+static int dmt_get_position(void){
+	return s_dmt->position;
+}
+
+static int dmt_set_position(int position){
+	if (!((position >= 0) && (position <= 7)))
+		return -1;
+	s_dmt->position = position;
+	return 0;
 }
 
 void gsensor_write_offset_to_file(void){
