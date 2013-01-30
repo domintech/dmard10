@@ -29,13 +29,12 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
-
+#include <linux/earlysuspend.h>
 #define AUTO_CALIBRATION	0
 
 #define DMT_DEBUG_DATA
 #define GSE_TAG                  "[DMT_Gsensor]"
 #ifdef DMT_DEBUG_DATA
-#define ADR_MAX (0x16)
 #define GSE_ERR(fmt, args...)    printk(KERN_ERR GSE_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
 #define GSE_LOG(fmt, args...)    printk(KERN_INFO GSE_TAG fmt, ##args)
 #define GSE_FUN(f)               printk(KERN_INFO GSE_TAG" %s: %s: %i\n", __FILE__, __func__, __LINE__)
@@ -122,7 +121,6 @@
 #define SENSOR_MAXNR 8
 /* Default parameters */
 #define DMT_DMARD10_DEFAULT_POSITION	0
-static uint8_t reg[ADR_MAX];
 /* Transformation matrix for chip mounting position */
 static const int dmt_position_map[][3][3] = {
     {	{ 1, 0,	0},	{ 0,-1,	0},	{ 0, 0,-1},	}, /* top/upper-left	*/
@@ -148,6 +146,9 @@ struct dmt_data {
   	struct class 			*class;
   	struct input_dev 		*input;
 	struct i2c_client 		*client;
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	struct early_suspend 	early_suspend;
+#endif
 	struct delayed_work 	delaywork;	
 	struct work_struct 		work;	
 	struct mutex 			data_mutex; 

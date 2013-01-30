@@ -30,7 +30,6 @@
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/earlysuspend.h>
 #include <linux/wakelock.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
@@ -257,7 +256,7 @@ static ssize_t DMT_offset_show(struct device *dev,
 				   struct device_attribute *attr,
 				   char *buf)
 {
-	return sprintf(buf, "%d %d %d\n", s_dmt->offset.u.x, s_dmt->offset.u.y, s_dmt->offset.u.z);
+	return sprintf(buf, "( %d %d %d )\n", s_dmt->offset.u.x, s_dmt->offset.u.y, s_dmt->offset.u.z);
 }
 
 static ssize_t DMT_offset_store(struct device *dev,
@@ -281,7 +280,7 @@ static ssize_t DMT_acc_private_data_show(struct device *dev,
 	accel = dmt->last;
 	mutex_unlock(&dmt->data_mutex);
 
-	return sprintf(buf, "%d %d %d\n", s_dmt->last.v[0], s_dmt->last.v[1], s_dmt->last.v[2]);
+	return sprintf(buf, "( %d %d %d )\n", s_dmt->last.v[0], s_dmt->last.v[1], s_dmt->last.v[2]);
 }
 /* sysfs id show */
 static ssize_t DMT_id_show(struct device *dev,
@@ -688,29 +687,28 @@ static struct miscdevice dmt_device = {
 
 static int sensor_close_dev(struct i2c_client *client){    	
 	char buffer[3];
+	GSE_FUN();
+	buffer[0] = REG_AFEM;
+	buffer[1] = 0x0f;
+	device_i2c_txdata(client,buffer, 2);
 	buffer[0] = REG_ACTR;
 	buffer[1] = MODE_Standby;
 	buffer[2] = MODE_Off;
-	GSE_FUN();	
-	return device_i2c_txdata(client,buffer, 3);
+	device_i2c_txdata(client,buffer, 3);	
+	return 0;
 }
 
 static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg){
 	struct dmt_data *dmt = i2c_get_clientdata(client);
-	mutex_lock(&dmt->enable_mutex);
-	dmt->suspend = 0;
-	mutex_unlock(&dmt->enable_mutex);
-	sensor_close_dev(client);
 	GSE_FUN();
-	return 0;//sensor_close_dev(client);
+	printk("1234567890");
+	sensor_close_dev(s_dmt->client);
+	return 0;
 }
 
 static int device_i2c_resume(struct i2c_client *client){
 	struct dmt_data *dmt = i2c_get_clientdata(client);
-	mutex_lock(&dmt->enable_mutex);
-	dmt->suspend = 1;
-	mutex_unlock(&dmt->enable_mutex);
-	gsensor_reset(client);
+	gsensor_reset(s_dmt->client);
 	GSE_FUN();
 	return 0;
 }
@@ -734,7 +732,7 @@ static struct i2c_driver device_i2c_driver =
 	.id_table = device_i2c_ids,
 	.probe = device_i2c_probe,
 	.remove	= __devexit_p(device_i2c_remove),
-#ifndef CONFIG_ANDROID_POWER
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	.suspend = device_i2c_suspend,
 	.resume	= device_i2c_resume,
 #endif	
@@ -1017,7 +1015,11 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
         GSE_ERR("create sysfs failed.");
         goto exit6;
     }
-    
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	s_dmt->early_suspend.suspend = device_i2c_suspend;
+	s_dmt->early_suspend.resume = device_i2c_resume;
+	register_early_suspend(&s_dmt->early_suspend);
+#endif
 	/* Setup driver interface */
 	INIT_DELAYED_WORK(&s_dmt->delaywork, DMT_work_func);
 	GSE_LOG("DMT: INIT_DELAYED_WORK\n");
