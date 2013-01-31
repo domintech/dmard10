@@ -2,8 +2,8 @@
  * @file include/linux/dmt10.h
  * @brief DMT g-sensor Linux device driver
  * @author Domintech Technology Co., Ltd (http://www.domintech.com.tw)
- * @version 1.02
- * @date 2012/12/10
+ * @version 1.04
+ * @date 2013/01/31
  *
  * @section LICENSE
  *
@@ -29,10 +29,10 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
-
+#include <linux/earlysuspend.h>
 #define AUTO_CALIBRATION	0
 
-#define DMT_DEBUG_DATA
+//#define DMT_DEBUG_DATA
 #define GSE_TAG                  "[DMT_Gsensor]"
 #ifdef DMT_DEBUG_DATA
 #define GSE_ERR(fmt, args...)    printk(KERN_ERR GSE_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
@@ -159,12 +159,13 @@ typedef union {
 } raw_data;
 
 struct dmt_data {
-	dev_t 					devno;
-	struct cdev 			cdev;
 	struct device			*class_dev;
   	struct class 			*class;
   	struct input_dev 		*input;
 	struct i2c_client 		*client;
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	struct early_suspend 	early_suspend;
+#endif
 	struct delayed_work 	delaywork;	
 	struct work_struct 		work;	
 	struct mutex 			sensor_mutex;

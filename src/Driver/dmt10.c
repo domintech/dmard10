@@ -2,7 +2,7 @@
  * @file drivers/misc/dmt10.c
  * @brief DMT g-sensor Linux device driver
  * @author Domintech Technology Co., Ltd (http://www.domintech.com.tw)
- * @version 1.03
+ * @version 1.04
  *
  * @section LICENSE
  *
@@ -20,7 +20,8 @@
  *  V1.00	D10 First Release											date 2012/09/21
  *  V1.01	static struct dmt_data s_dmt Refresh to device_i2c_probe	date 2012/11/23
  *  V1.02	0x0D cck : adjustment 204.8KHz core clock					date 2012/11/30
- *  V1.03	write TCGYZ & TCGX : set value to 0x00						date 2012/12/10 
+ *  V1.03	write TCGYZ & TCGX : set value to 0x00						date 2012/12/10
+ *  V1.04	set	CONFIG_HAS_EARLYSUSPEND									date 2013/01/31  
  */
 #include "dmt10.h"
 #include <linux/module.h>
@@ -30,7 +31,6 @@
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/earlysuspend.h>
 #include <linux/wakelock.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
@@ -466,9 +466,9 @@ int gsensor_reset(struct i2c_client *client){
 	buffer[2] = MODE_WriteOTPBuf;	// WriteOTPBuf 
 	buffer[3] = MODE_Standby;		// Standby
 	device_i2c_txdata(client, buffer, 4);	
-	buffer[0] = REG_TCGYZ;
-	device_i2c_rxdata(client, buffer, 2);
-	GSE_LOG(" TCGYZ = %d, TCGX = %d  \n", buffer[0], buffer[1]);
+	//buffer[0] = REG_TCGYZ;
+	//device_i2c_rxdata(client, buffer, 2);
+	//GSE_LOG(" TCGYZ = %d, TCGX = %d  \n", buffer[0], buffer[1]);
 	
 	/* 7. Activation mode */
 	buffer[0] = REG_ACTR;
@@ -498,13 +498,32 @@ static struct miscdevice dmt_device = {
 
 static int sensor_close_dev(struct i2c_client *client){    	
 	char buffer[3];
+	buffer[0] = REG_AFEM;
+	buffer[1] = 0x0f;
+	device_i2c_txdata(client,buffer, 2);
 	buffer[0] = REG_ACTR;
 	buffer[1] = MODE_Standby;
 	buffer[2] = MODE_Off;
 	GSE_FUN();	
 	return device_i2c_txdata(client,buffer, 3);
 }
+#ifdef CONFIG_HAS_EARLYSUSPEND
+static void dmard10_early_suspend(struct early_suspend *handler)
+{
+	struct dmt_data *dmt;
+	dmt = container_of(handler, struct dmt_data, early_suspend);
+	GSE_FUN();
+	sensor_close_dev(dmt->client);
+}
 
+static void dmard10_early_resume(struct early_suspend *handler)
+{
+	struct dmt_data *dmt;
+	dmt = container_of(handler, struct dmt_data, early_suspend);
+	gsensor_reset(dmt->client);
+	GSE_FUN();
+}
+#endif
 static int device_i2c_suspend(struct i2c_client *client, pm_message_t mesg){
 	GSE_FUN();
 	return sensor_close_dev(client);
@@ -710,8 +729,10 @@ void device_i2c_read_xyz(struct i2c_client *client, s16 *xyz_p){
 	for(i = 0; i < SENSOR_DATA_SIZE; ++i){
 		xyz_p[i] = 0;
 		device_i2c_merge_register_values(client, (xyzTmp + i), buffer[2*(i+1)+1], buffer[2*(i+1)]);
+	}
 	/* transfer to the default layout */
-		for(j = 0; j < 3; j++)
+	for(i = 0; i < SENSOR_DATA_SIZE; ++i){
+		for(j = 0; j < SENSOR_DATA_SIZE; j++)
 			xyz_p[i] += sensorlayout[i][j] * xyzTmp[j];
 	}
 	GSE_LOG("xyz_p: %04d , %04d , %04d\n", xyz_p[0], xyz_p[1], xyz_p[2]);
@@ -805,7 +826,12 @@ static int __devinit device_i2c_probe(struct i2c_client *client,const struct i2c
         GSE_ERR("create sysfs failed.");
         goto exit6;
     }
-
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	s_dmt->early_suspend.suspend = dmard10_early_suspend;
+	s_dmt->early_suspend.resume = dmard10_early_resume;
+	register_early_suspend(&s_dmt->early_suspend);
+#endif
+	/* Setup driver interface */
 	INIT_DELAYED_WORK(&s_dmt->delaywork, DMT_work_func);
 	GSE_LOG("DMT: INIT_DELAYED_WORK\n");
 	return 0;
