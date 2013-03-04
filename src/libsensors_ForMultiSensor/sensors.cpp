@@ -34,7 +34,6 @@
 #include "DmtSensor.h"
 
 #include "AkmSensor.h"
-#include "SensorAL3006.h"
 /*****************************************************************************/
 
 #define DELAY_OUT_TIME 0x7FFFFFFF
@@ -45,14 +44,10 @@
 #define SENSORS_ACCELERATION     (1<<ID_A)
 #define SENSORS_MAGNETIC_FIELD   (1<<ID_M)
 #define SENSORS_ORIENTATION      (1<<ID_O)
-#define SENSORS_LIGHT            (1<<ID_L)
-#define SENSORS_PROXIMITY        (1<<ID_P)
 
 #define SENSORS_ACCELERATION_HANDLE     0
 #define SENSORS_MAGNETIC_FIELD_HANDLE   1
 #define SENSORS_ORIENTATION_HANDLE      2
-#define SENSORS_LIGHT_HANDLE            3
-#define SENSORS_PROXIMITY_HANDLE        4
 
 /*****************************************************************************/
 
@@ -136,52 +131,6 @@ static const struct sensor_t sSensorList[] = {
           SENSOR_TYPE_ORIENTATION, 360.0f,
 		  CONVERT_O, 0.35f, 10000, { } },
 #endif
-#ifdef SENSORHAL_ACC_LIS3DH
-        { "ST LIS3DH 3-axis Accelerometer",
-          "ST",
-          1, SENSORS_ACCELERATION_HANDLE,
-          SENSOR_TYPE_ACCELEROMETER, (GRAVITY_EARTH * 2.0f),
-		  (GRAVITY_EARTH)/ 1024.0f, 0.145f, 10000, { } },
-        { "AK8975 Orientation sensor",
-          "Asahi Kasei Microdevices",
-          1, SENSORS_ORIENTATION_HANDLE,
-          SENSOR_TYPE_ORIENTATION, 360.0f,
-		  CONVERT_O, 0.495f, 10000, { } },
-#endif
-#ifdef SENSORHAL_ACC_ADXL346
-        { "Analog Devices ADXL345/6 3-axis Accelerometer",
-          "ADI",
-          1, SENSORS_ACCELERATION_HANDLE,
-          SENSOR_TYPE_ACCELEROMETER, (GRAVITY_EARTH * 16.0f),
-		  (GRAVITY_EARTH * 16.0f) / 4096.0f, 0.145f, 10000, { } },
-        { "AK8975 Orientation sensor",
-          "Asahi Kasei Microdevices",
-          1, SENSORS_ORIENTATION_HANDLE,
-          SENSOR_TYPE_ORIENTATION, 360.0f,
-		  CONVERT_O, 0.495f, 10000, { } },
-#endif
-#ifdef SENSORHAL_ACC_KXTF9
-        { "Kionix KXTF9 3-axis Accelerometer",
-          "Kionix",
-          1, SENSORS_ACCELERATION_HANDLE,
-          SENSOR_TYPE_ACCELEROMETER, (GRAVITY_EARTH * 2.0f),
-		  (GRAVITY_EARTH) / 1024.0f, 0.7f, 10000, { } },
-        { "AK8975 Orientation sensor",
-          "Asahi Kasei Microdevices",
-          1, SENSORS_ORIENTATION_HANDLE,
-          SENSOR_TYPE_ORIENTATION, 360.0f,
-		  CONVERT_O, 1.05f, 10000, { } },
-#endif
-        { "AL3006 Light sensor",
-          "LITEON",
-          1, SENSORS_LIGHT_HANDLE,
-          SENSOR_TYPE_LIGHT, 1.0f, 
-          100000.0f, 0.005f, 0, { } },
-        { "AL3006 Proximity sensor",
-          "LITEON",
-          1, SENSORS_PROXIMITY_HANDLE,
-          SENSOR_TYPE_PROXIMITY, 1.0f, 
-          1.0f, 0.005f, 0, { } },
 };
 
 static int open_sensors(const struct hw_module_t* module, const char* id,
@@ -225,7 +174,6 @@ private:
     enum {
         acc          = 0,
         akm          = 1,
-        al3006_pls	 = 2,
         numSensorDrivers,
         numFds,
     };
@@ -248,15 +196,6 @@ private:
 
 sensors_poll_context_t::sensors_poll_context_t()
 {
-#ifdef SENSORHAL_ACC_ADXL346
-    mSensors[acc] = new AdxlSensor();
-#endif
-#ifdef SENSORHAL_ACC_KXTF9
-    mSensors[acc] = new KionixSensor();
-#endif
-#ifdef SENSORHAL_ACC_LIS3DH
-    mSensors[acc] = new Lis3dhSensor();
-#endif
 #ifdef SENSORHAL_ACC_D03
     mSensors[acc] = new DmtSensor();
 #endif
@@ -287,12 +226,6 @@ sensors_poll_context_t::sensors_poll_context_t()
     mPollFds[akm].events = POLLIN;
     mPollFds[akm].revents = 0;
 
-    mSensors[al3006_pls] = new SensorAL3006();
-    mPollFds[al3006_pls].fd = mSensors[al3006_pls]->getFd();
-    mPollFds[al3006_pls].events = POLLIN;
-    mPollFds[al3006_pls].revents = 0;
-
-
     int wakeFds[2];
     int result = pipe(wakeFds);
     LOGE_IF(result<0, "error creating wake pipe (%s)", strerror(errno));
@@ -320,9 +253,6 @@ int sensors_poll_context_t::handleToDriver(int handle) {
 		case ID_M:
 		case ID_O:
 			return akm;
-		case ID_L:
-		case ID_P:
-			return al3006_pls;
 	}
 	return -EINVAL;
 }
@@ -334,8 +264,8 @@ int sensors_poll_context_t::activate(int handle, int enabled) {
 	switch (handle) {
 		case ID_A:
 		case ID_M:
-		case ID_L:
-		case ID_P:
+		//case ID_L:
+		//case ID_P:
 			/* No dependencies */
 			break;
 
@@ -365,8 +295,8 @@ int sensors_poll_context_t::setDelay(int handle, int64_t ns) {
 	switch (handle) {
 		case ID_A:
 		case ID_M:
-		case ID_L:
-		case ID_P:
+		//case ID_L:
+		//case ID_P:
 			/* No dependencies */
 			break;
 
