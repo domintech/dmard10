@@ -34,6 +34,7 @@
 #include "DmtSensor.h"
 
 #include "AkmSensor.h"
+#include "GyroscopeSensor.h"
 /*****************************************************************************/
 
 #define DELAY_OUT_TIME 0x7FFFFFFF
@@ -48,7 +49,7 @@
 #define SENSORS_ACCELERATION_HANDLE     0
 #define SENSORS_MAGNETIC_FIELD_HANDLE   1
 #define SENSORS_ORIENTATION_HANDLE      2
-
+#define SENSORS_GYROSCOPE_HANDLE		3
 /*****************************************************************************/
 
 /* The SENSORS Module */
@@ -131,6 +132,18 @@ static const struct sensor_t sSensorList[] = {
           SENSOR_TYPE_ORIENTATION, 360.0f,
 		  CONVERT_O, 0.35f, 10000, { } },
 #endif
+		{
+         name        : "L3G4200D Gyroscope Sensor",
+         vendor      : "STMicroelectronics",
+         version     : 1,
+         handle      : SENSORS_GYROSCOPE_HANDLE,
+         type        : SENSOR_TYPE_GYROSCOPE,
+         maxRange    : 0,
+         resolution  : 0,
+         power       : 0,
+         minDelay    : 10000,
+         reserved    : {0},
+    },
 };
 
 static int open_sensors(const struct hw_module_t* module, const char* id,
@@ -153,8 +166,8 @@ struct sensors_module_t HAL_MODULE_INFO_SYM = {
                 version_major: 1,
                 version_minor: 0,
                 id: SENSORS_HARDWARE_MODULE_ID,
-                name: "AKM Sensor module",
-                author: "Asahi Kasei Microdevices",
+                name: "DMT Sensor module",
+                author: "Domintech",
                 methods: &sensors_module_methods,
         },
         get_sensors_list: sensors__get_sensors_list,
@@ -172,8 +185,9 @@ struct sensors_poll_context_t {
 
 private:
     enum {
-        acc          = 0,
-        akm          = 1,
+        acc	= 0,
+        akm,
+        gyro,
         numSensorDrivers,
         numFds,
     };
@@ -225,6 +239,11 @@ sensors_poll_context_t::sensors_poll_context_t()
     mPollFds[akm].fd = mSensors[akm]->getFd();
     mPollFds[akm].events = POLLIN;
     mPollFds[akm].revents = 0;
+    
+    mSensors[gyro] = new GyroscopeSensor();
+    mPollFds[gyro].fd = mSensors[gyro]->getFd();
+    mPollFds[gyro].events = POLLIN;
+    mPollFds[gyro].revents = 0;
 
     int wakeFds[2];
     int result = pipe(wakeFds);
@@ -253,6 +272,8 @@ int sensors_poll_context_t::handleToDriver(int handle) {
 		case ID_M:
 		case ID_O:
 			return akm;
+		case ID_G:
+			return gyro;
 	}
 	return -EINVAL;
 }
@@ -264,9 +285,6 @@ int sensors_poll_context_t::activate(int handle, int enabled) {
 	switch (handle) {
 		case ID_A:
 		case ID_M:
-		//case ID_L:
-		//case ID_P:
-			/* No dependencies */
 			break;
 
 		case ID_O:
@@ -274,7 +292,11 @@ int sensors_poll_context_t::activate(int handle, int enabled) {
 			mSensors[handleToDriver(ID_A)]->setEnable(ID_A, enabled);
 			mSensors[handleToDriver(ID_M)]->setEnable(ID_M, enabled);
 			break;
-
+		
+		case ID_G:
+			mSensors[handleToDriver(ID_G)]->setEnable(ID_G, enabled);
+			break;
+			
 		default:
 			return -EINVAL;
 	}
@@ -295,17 +317,16 @@ int sensors_poll_context_t::setDelay(int handle, int64_t ns) {
 	switch (handle) {
 		case ID_A:
 		case ID_M:
-		//case ID_L:
-		//case ID_P:
-			/* No dependencies */
-			break;
-
 		case ID_O:
 			/* These sensors depend on ID_A and ID_M */
 			setDelay_sub(ID_A, ns);
 			setDelay_sub(ID_M, ns);
 			break;
-
+		
+		case ID_G:
+			setDelay_sub(ID_G, ns);
+			break;
+			
 		default:
 			return -EINVAL;
 	}
@@ -336,7 +357,7 @@ int sensors_poll_context_t::pollEvents(sensors_event_t* data, int count)
 {
     int nbEvents = 0;
     int n = 0;
-
+	//LOGD(("pollEvents data[%p] count[%d] IN\n", data, count));
     do {
         // see if we have some leftover from the last poll()
         for (int i=0 ; count && i<numSensorDrivers ; i++) {
@@ -347,9 +368,9 @@ int sensors_poll_context_t::pollEvents(sensors_event_t* data, int count)
                     // no more data for this sensor
                     mPollFds[i].revents = 0;
                 }
-				if ((0 != nb) && (acc == i)) {
-					((AkmSensor*)(mSensors[akm]))->setAccel(&data[nb-1]);
-				}
+				//?if ((0 != nb) && (acc == i)) {
+					//?((AkmSensor*)(mSensors[akm]))->setAccel(&data[nb-1]);
+				//?}
                 count -= nb;
                 nbEvents += nb;
                 data += nb;
@@ -375,7 +396,7 @@ int sensors_poll_context_t::pollEvents(sensors_event_t* data, int count)
         }
         // if we have events and space, go read them
     } while (n && count);
-
+	//LOGD(("pollEvents OUT [%d]\n", count));
     return nbEvents;
 }
 

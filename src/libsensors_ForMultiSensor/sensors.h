@@ -36,8 +36,7 @@ __BEGIN_DECLS
 #define ID_A  (0)
 #define ID_M  (1)
 #define ID_O  (2)
-#define ID_L  (3)
-#define ID_P  (4)
+#define ID_G  (3)
 
 /*****************************************************************************/
 
@@ -59,15 +58,16 @@ __BEGIN_DECLS
 #define EVENT_TYPE_MAGV_Z           ABS_RZ
 #define EVENT_TYPE_MAGV_STATUS      ABS_RUDDER
 
-/* Fro AKM Algorithm */
+/* For AKM Algorithm */
 #define EVENT_TYPE_YAW              ABS_HAT0X
 #define EVENT_TYPE_PITCH            ABS_HAT0Y
 #define EVENT_TYPE_ROLL             ABS_HAT1X
 #define EVENT_TYPE_ORIENT_STATUS    ABS_HAT1Y
 
-/* Fro AL3006 */
-#define EVENT_TYPE_PROXIMITY        ABS_DISTANCE
-#define EVENT_TYPE_LIGHT            ABS_MISC
+/* For GYRO */
+#define EVENT_TYPE_GYRO_X          ABS_X
+#define EVENT_TYPE_GYRO_Y          ABS_Y
+#define EVENT_TYPE_GYRO_Z          ABS_Z
 
 
 /* conversion of acceleration data to SI units (m/s^2) */

@@ -36,6 +36,7 @@ LOCAL_SRC_FILES := \
 			InputEventReader.cpp \
 			DmtSensor.cpp \
 			AkmSensor.cpp \
+			GyroscopeSensor.cpp \
 			sensors.cpp 
 
 LOCAL_SHARED_LIBRARIES := liblog libcutils libdl
