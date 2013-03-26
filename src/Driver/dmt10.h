@@ -29,10 +29,10 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
-#include <linux/earlysuspend.h>
+
 #define AUTO_CALIBRATION	0
 
-#define DMT_DEBUG_DATA
+//#define DMT_DEBUG_DATA
 #define GSE_TAG                  "[DMT_Gsensor]"
 #ifdef DMT_DEBUG_DATA
 #define GSE_ERR(fmt, args...)    printk(KERN_ERR GSE_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
@@ -46,7 +46,6 @@
 #define DMT_DATA(dev, format, ...)
 #endif
 
-#define GSENSOR_ID				"DMARD10"
 #define INPUT_NAME_ACC			"DMT_accel"	/* Input Device Name  */
 #define DEVICE_I2C_NAME 		"dmt"		/* Device name for DMARD10 misc. device */
 #define REG_ACTR 				0x00
@@ -119,19 +118,37 @@
 #define SENSOR_GET_CLOSE_STATUS	_IO(IOCTL_MAGIC,  7)
 #define SENSOR_GET_DELAY		_IOR(IOCTL_MAGIC,  8, unsigned int*)
 #define SENSOR_MAXNR 8
-/* Default parameters */
-#define DMT_DMARD10_DEFAULT_POSITION	0
-/* Transformation matrix for chip mounting position */
-static const int dmt_position_map[][3][3] = {
-    {	{ 1, 0,	0},	{ 0,-1,	0},	{ 0, 0,-1},	}, /* top/upper-left	*/
-    {	{ 0, 1,	0},	{ 1, 0,	0},	{ 0, 0,-1},	}, /* top/lower-left	*/
-    {	{-1, 0,	0},	{ 0, 1,	0}, { 0, 0,-1},	}, /* top/lower-right	*/
-    {	{ 0,-1,	0},	{-1, 0,	0}, { 0, 0,-1},	}, /* top/upper-right	*/
-    {	{-1, 0,	0},	{ 0,-1,	0}, { 0, 0, 1},	}, /* bottom/upper-right*/
-    {	{ 0,-1,	0},	{-1, 0,	0}, { 0, 0, 1},	}, /* bottom/upper-left	*/
-    {	{ 1, 0,	0},	{ 0, 1,	0}, { 0, 0, 1},	}, /* bottom/lower-right*/
-    {	{ 0, 1,	0},	{ 1, 0,	0}, { 0, 0, 1},	}, /* bottom/lower-left	*/
+
+/* g-senor layout configuration, choose one of the following configuration */
+#define CONFIG_GSEN_LAYOUT_PAT_1	1
+#define CONFIG_GSEN_LAYOUT_PAT_2	0
+#define CONFIG_GSEN_LAYOUT_PAT_3	0
+#define CONFIG_GSEN_LAYOUT_PAT_4	0
+#define CONFIG_GSEN_LAYOUT_PAT_5	0
+#define CONFIG_GSEN_LAYOUT_PAT_6	0
+#define CONFIG_GSEN_LAYOUT_PAT_7	0
+#define CONFIG_GSEN_LAYOUT_PAT_8	0
+
+s16 sensorlayout[3][3] = {
+#if CONFIG_GSEN_LAYOUT_PAT_1
+    { 1, 0, 0},	{ 0, 1,	0}, { 0, 0, 1},
+#elif CONFIG_GSEN_LAYOUT_PAT_2
+    { 0, 1, 0}, {-1, 0,	0}, { 0, 0, 1},
+#elif CONFIG_GSEN_LAYOUT_PAT_3
+    {-1, 0, 0},	{ 0,-1,	0}, { 0, 0, 1},
+#elif CONFIG_GSEN_LAYOUT_PAT_4
+    { 0,-1, 0},	{ 1, 0,	0}, { 0, 0, 1},
+#elif CONFIG_GSEN_LAYOUT_PAT_5
+    {-1, 0, 0},	{ 0, 1,	0}, { 0, 0,-1},
+#elif CONFIG_GSEN_LAYOUT_PAT_6
+    { 0,-1, 0}, {-1, 0,	0}, { 0, 0,-1},
+#elif CONFIG_GSEN_LAYOUT_PAT_7
+    { 1, 0, 0},	{ 0,-1,	0}, { 0, 0,-1},
+#elif CONFIG_GSEN_LAYOUT_PAT_8
+    { 0, 1, 0},	{ 1, 0,	0}, { 0, 0,-1},
+#endif
 };
+
 typedef union {
 	struct {
 		s16	x;
@@ -142,39 +159,23 @@ typedef union {
 } raw_data;
 
 struct dmt_data {
+	dev_t 					devno;
+	struct cdev 			cdev;
 	struct device			*class_dev;
   	struct class 			*class;
   	struct input_dev 		*input;
 	struct i2c_client 		*client;
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	struct early_suspend 	early_suspend;
-#endif
 	struct delayed_work 	delaywork;	
 	struct work_struct 		work;	
-	struct mutex 			data_mutex; 
-	struct mutex			enable_mutex; //for suspend
-	raw_data 				last;  //RawData
-	raw_data 				offset; //offset
+	struct mutex 			sensor_mutex;
 	wait_queue_head_t		open_wq;
 	atomic_t				active;
 	atomic_t 				delay;
 	atomic_t 				enable;
-	int						position;
-	atomic_t				addr;
-#ifdef DMT_DEBUG_DATA
-	struct mutex suspend_mutex;
-	int suspend;
-#endif
 };
 
 #define ACC_DATA_FLAG		0
 #define MAG_DATA_FLAG		1
 #define ORI_DATA_FLAG		2
 #define DMT_NUM_SENSORS		3
-
-/* ABS axes parameter range [um/s^2] (for input event) */
-#define GRAVITY_EARTH		9806550
-#define ABSMAX				(GRAVITY_EARTH * 2)
-#define ABSMIN				(-GRAVITY_EARTH * 2)
-
 #endif               
