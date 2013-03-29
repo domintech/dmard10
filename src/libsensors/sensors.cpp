@@ -42,32 +42,16 @@
 #include <cutils/native_handle.h>
 #define LOG_TAG "Sensors"
 /*****************************************************************************/
-
 #define SENSORS_ACCELERATION_HANDLE     0
 #define SENSORS_MAGNETIC_FIELD_HANDLE   1
 #define SENSORS_ORIENTATION_HANDLE      2
 #define INPUT_NAME_ACC		"DMT_accel"
-#define SensorDevice		"/dev/dmard06"//"/dev/dmt"
+#define SensorDevice		"/dev/dmt"//"/dev/dmard06"
 #define CONVERT_A		(GRAVITY_EARTH / 1024.0f)  //1g = 1024codes
 /*****************************************************************************/
-
-#if ENABLE_DMT_DMARD03
 static const struct sensor_t sSensorList = {
-  	"DMARD03 Accelerometer",
-	"DMT",
-	1,
-	SENSORS_ACCELERATION_HANDLE,
-	SENSOR_TYPE_ACCELEROMETER,
-	(GRAVITY_EARTH * 3.0f),
-	CONVERT_A,
-	0.25f,
-	0, {}
-};
-#endif
-#if ENABLE_DMT_DMARD05
-static const struct sensor_t sSensorList = {
-  	"DMARD05 Accelerometer",
-	"DMT",
+  	"DMT Accelerometer",
+	"Domintec Co., Ltd.",
 	1,
 	SENSORS_ACCELERATION_HANDLE,
 	SENSOR_TYPE_ACCELEROMETER,
@@ -76,60 +60,6 @@ static const struct sensor_t sSensorList = {
 	0.145f,
 	0, {}
 };
-#endif
-#if ENABLE_DMT_DMARD06
-static const struct sensor_t sSensorList = {
-  	"DMARD06 Accelerometer",
-	"DMT",
-	1,
-	SENSORS_ACCELERATION_HANDLE,
-	SENSOR_TYPE_ACCELEROMETER,
-	(GRAVITY_EARTH * 2.0f),
-	CONVERT_A,
-	0.145f,
-	0, {}
-};
-#endif
-#if ENABLE_DMT_DMARD07
-static const struct sensor_t sSensorList = {
-  	"DMARD07 Accelerometer",
-	"DMT",
-	1,
-	SENSORS_ACCELERATION_HANDLE,
-	SENSOR_TYPE_ACCELEROMETER,
-	(GRAVITY_EARTH * 2.0f),
-	CONVERT_A,
-	0.145f,
-	0, {}
-};
-#endif
-#if ENABLE_DMT_DMARD08
-static const struct sensor_t sSensorList = {
-  	"DMARD08 Accelerometer",
-	"DMT",
-	1,
-	SENSORS_ACCELERATION_HANDLE,
-	SENSOR_TYPE_ACCELEROMETER,
-	(GRAVITY_EARTH * 3.0f),
-	CONVERT_A,
-	0.25f,
-	0, {}
-};
-#endif
-#if ENABLE_DMT_DMARD10
-static const struct sensor_t sSensorList = {
-  	"DMARD10 Accelerometer",
-	"DMT",
-	1,
-	SENSORS_ACCELERATION_HANDLE,
-	SENSOR_TYPE_ACCELEROMETER,
-	(GRAVITY_EARTH * 2.0f),
-	CONVERT_A,
-	0.145f,
-	0, {}
-};
-#endif
-
 static unsigned int  gsensor_delay_time = 100000; // 100 ms
 int fd=-1;
 sensors_event_t mPendingEvents[3];//3 for acc,mag,ori sensors
@@ -140,7 +70,7 @@ int write_sys_attribute(const char *path, const char *value, int bytes)
 
 	ifd = open(path, O_WRONLY);
     if (ifd < 0) {
-        LOGE("Write_attr failed to open %s (%s)",path, strerror(errno));
+        //LOGE("Write_attr failed to open %s (%s)",path, strerror(errno));
         return -1;
 	}
 
@@ -152,65 +82,53 @@ int write_sys_attribute(const char *path, const char *value, int bytes)
 	return amt;
 }
 
-
-int open_input_dev(void)
-{
- const char *dirname = "/dev/input";  
- char devname[30];  
- char *filename;  
- //int i,version;
- char name[80] ;  
- DIR *dir;  
- struct dirent *de;  
- start:
- dir = opendir(dirname);  
- strcpy(devname,dirname);  
- LOGE("%s:devname=%s\n",__func__,devname);  //"/dev/input"
- filename = devname + strlen(devname);  
- *filename++ = '/';  
- while((de = readdir(dir)))
- {  
-  if(   ( (de->d_name[0]=='.') && (de->d_name[1]=='\0') ) ||  \
-	( (de->d_name[1]=='.') && (de->d_name[2]=='\0') ) )  
-   continue;  
-  LOGE("%s:d_name=%s\n",__func__,de->d_name);  
-  strcpy(filename,de->d_name);  
+int open_input_dev(void){
+	const char *dirname = "/dev/input";  
+	char devname[30];  
+	char *filename;  
+	//int i,version;
+	char name[80] ;  
+	DIR *dir;  
+	struct dirent *de;  
+	start:
+	dir = opendir(dirname);  
+	strcpy(devname,dirname);  
+	filename = devname + strlen(devname);  
+	*filename++ = '/';  
+	while((de = readdir(dir))){  
+		if(((de->d_name[0]=='.') && (de->d_name[1]=='\0')) ||  \
+			((de->d_name[1]=='.') && (de->d_name[2]=='\0')))  
+   			continue;  
+  		//LOGE("%s:d_name=%s\n",__func__,de->d_name);  
+  	strcpy(filename,de->d_name);  
     
-  fd = open(devname,O_RDONLY);  
-  LOGE("%s:devname=%s and filename=%s,fd=%d\n",__func__,devname,filename,fd);
-  if(fd > 0)
-  {  
-  	 if(ioctl(fd, EVIOCGNAME(sizeof(name)),name) > 0)
-   	{  
-    		LOGE("devname=%s\n",devname);  
-    		LOGE("name=%s\n",name);  
-    		if(!strcmp(name,INPUT_NAME_ACC))//"DMT_Gsensor"))
-    		{		 
-     			LOGE("%s:name=%s,fd=%d\n",__func__,name,fd);
-     			break;
-    		}
-		else
-    		{
-  			LOGE("%s: fd= %d\n",__func__,fd);
-     			close(fd);
-       			fd=-1;
-		}
-   	}  
-  }//end of if(fd > 0)
- } // end of while((de = readdir(dir))) 
- closedir(dir);
- if(strcmp(name,INPUT_NAME_ACC))
- {
-	LOGE("%s:Cannot find DMT_Compass !\n",__func__);
- }
-
+  	fd = open(devname,O_RDONLY);  
+  	//LOGE("%s:devname=%s and filename=%s,fd=%d\n",__func__,devname,filename,fd);
+  		if(fd > 0){  
+			if(ioctl(fd, EVIOCGNAME(sizeof(name)),name) > 0){  
+    			//LOGE("devname=%s\n",devname);  
+    			//LOGE("name=%s\n",name);  
+    			if(!strcmp(name,INPUT_NAME_ACC)){		 
+    	 			//LOGE("%s:name=%s,fd=%d\n",__func__,name,fd);
+    	 			break;
+    			}
+			else{
+  				//LOGE("%s: fd= %d\n",__func__,fd);
+    	 		close(fd);
+    	   		fd=-1;
+				}
+   			}  
+  		}//end of if(fd > 0)
+ 	} // end of while((de = readdir(dir))) 
+	closedir(dir);
+	if(strcmp(name,INPUT_NAME_ACC)){
+	//LOGE("%s:Cannot find DMT_Compass !\n",__func__);
+	}
  return 0;
 }
 
-static int ProcessEvent(int code,int value)
-{
-	switch (code)
-	{
+static int ProcessEvent(int code,int value){
+	switch (code){
 		case ABS_X:
 			mPendingEvents[0].acceleration.x=value*(CONVERT_A);
 			break;
@@ -224,7 +142,6 @@ static int ProcessEvent(int code,int value)
 	return 0;
 }
 
-//*****************************************************************************************************
 static int open_sensors(const struct hw_module_t* module, const char* name, struct hw_device_t** device);
 
 struct sensors_poll_context_t {
@@ -262,10 +179,10 @@ static int gsensor_open(struct sensors_poll_context_t *dev)
 	if(dev->fd < 0){
 		dev->fd = open(SensorDevice, O_RDONLY);
 		if(dev->fd >= 0) {
-			printf("Open GSensor Success\n");
+			//LOGE("Open GSensor Success\n");
 		}
 		else{
-			printf("Open GSensor Error\n");
+			//LOGE("Open GSensor Error\n");
 		}
 	}
 	return dev->fd;
@@ -298,16 +215,10 @@ static int poll__setDelay(struct sensors_poll_device_t *dev, int handle, int64_t
 	char path[]="/sys/class/accelemeter/dmt/delay_acc";
 	gsensor_delay_time = ns / 1000000;
 	bytes=sprintf(value,"%u",gsensor_delay_time);
-	LOGE("value=%s ,gsensor=%u, bytes=%d\n",value,gsensor_delay_time,bytes);
-		
+	//LOGE("value=%s ,gsensor=%u, bytes=%d\n",value,gsensor_delay_time,bytes);	
 	write_sys_attribute(path,value, bytes);
 	return 0;
 }
-
-
-
-//*******************************************************************************************************
-
 
 static int poll__poll(struct sensors_poll_device_t *device, sensors_event_t* data, int count)
 {
@@ -318,42 +229,36 @@ static int poll__poll(struct sensors_poll_device_t *device, sensors_event_t* dat
 	int64_t time=0 ;
 	int nread=0;
 	int i,ReturntoPoll;
-	if(fd<0)
-	{
-	 LOGE("%s: input device is not ready !\n",__func__);
-	 return 0;
-	}
+	//if(fd<0){
+		//LOGE("%s: input device is not ready !\n",__func__);
+	 //return 0;
+	//}
 	ReturntoPoll=0;
    	nread=read(fd, &event[0], 5*sizeof(struct input_event));
 	nread/=sizeof(struct input_event);
-  	if(nread>0)
-	{
-	 for(i=0;i<nread;i++)
-	 {
-		switch(event[i].type)
-		{
-		case EV_ABS:	
-			if(event[i].value==65536)
-			{
-				close(fd);
-				event[i].value=0;
-			}	
-			ProcessEvent(event[i].code,event[i].value);
-			break;
-		case EV_SYN:
-      			time= event[0].time.tv_sec * 1000000000LL + event[0].time.tv_usec * 1000;
+  	if(nread>0){
+		for(i=0;i<nread;i++){
+			switch(event[i].type){
+				case EV_ABS:	
+					if(event[i].value==65536){
+						close(fd);
+						event[i].value=0;
+					}	
+					ProcessEvent(event[i].code,event[i].value);
+					break;
+				case EV_SYN:
+      				time= event[0].time.tv_sec * 1000000000LL + event[0].time.tv_usec * 1000;
                		mPendingEvents[0].timestamp = time;	
-			*data=mPendingEvents[0];
-			ReturntoPoll=1;
-			break;		
-		}
-	 }
+					*data=mPendingEvents[0];
+					ReturntoPoll=1;
+					break;		
+			}
+	 	}
 	}
 	return ReturntoPoll;// then Android will not analysis the data , even data is legal.
 }
 
-static int open_sensors(const struct hw_module_t* module, const char* name, struct hw_device_t** device)
-{
+static int open_sensors(const struct hw_module_t* module, const char* name, struct hw_device_t** device){
 	int status = -EINVAL;
 	if(!strcmp(name, SENSORS_HARDWARE_POLL)){
 		struct sensors_poll_context_t *dev;
